@@ -14,7 +14,7 @@ Anforderungen:
     Python + GDAL (osgeo4w): gdal >= 3.1 (COG-Driver)
 
 Verwendung:
-    python convertDATA_cogtiff_4band_to_3band.py
+    python 02_convertDATA_cogtiff_4band_to_3band.py
     oder als Modul: convert(input_path, output_path, output_bands, ...)
 """
 
