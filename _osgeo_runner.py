@@ -104,8 +104,10 @@ def _convert(cfg: dict) -> None:
 
     for b in range(1, band_count + 1):
         if b not in output_bands and color_interps[b - 1] == "Alpha":
-            _log(f"  ⚠ WARNUNG     : Band {b} hat ColorInterp=Alpha – Transparenzmaske fällt weg. "
-                 f"NoData={'«' + nodata + '»' if nodata else 'nicht gesetzt'}.")
+            _log(
+                f"  WARNING       : Band {b} hat ColorInterp=Alpha - Transparenzmaske fällt weg. "
+                f"NoData={'«' + nodata + '»' if nodata else 'nicht gesetzt'}."
+            )
 
     if any(b < 1 or b > band_count for b in output_bands):
         raise ValueError(

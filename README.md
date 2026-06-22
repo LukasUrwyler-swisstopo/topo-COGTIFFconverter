@@ -17,9 +17,9 @@ Typische Anwendungsfälle mit swisstopo-Luftbildern (DOP):
 
 | Datei | Beschreibung |
 |-------|-------------|
-| `GUI_cogtiff_4band_to_3band.py` | Tkinter-GUI — startet mit Standard-Python |
+| `01_GUI_cogtiff_4band_to_3band.py` | Tkinter-GUI — startet mit Standard-Python |
 | `_osgeo_runner.py` | GDAL-Worker — wird intern via OSGeo4W Python als Subprocess gestartet |
-| `convertDATA_cogtiff_4band_to_3band.py` | Standalone-Script für die Kommandozeile (erfordert OSGeo4W Python direkt) |
+| `02_convertDATA_cogtiff_4band_to_3band.py` | Standalone-Script für die Kommandozeile (erfordert OSGeo4W Python direkt) |
 
 ---
 
@@ -35,7 +35,7 @@ Typische Anwendungsfälle mit swisstopo-Luftbildern (DOP):
 ## GUI starten
 
 ```bash
-python GUI_cogtiff_4band_to_3band.py
+python 01_GUI_cogtiff_4band_to_3band.py
 ```
 
 Beim ersten Start erkennt das GUI automatisch die OSGeo4W-Installation. Der Pfad kann über die Schaltfläche **Ändern…** manuell gesetzt und wird in `_cogtiff_config.json` gespeichert.
@@ -92,10 +92,10 @@ Das Koordinatensystem wird aus der Quelldatei übernommen und unverändert in di
 
 ## Standalone-Script (ohne GUI)
 
-Für Batch-Verarbeitung kann `convertDATA_cogtiff_4band_to_3band.py` direkt mit OSGeo4W Python ausgeführt werden:
+Für Batch-Verarbeitung kann `02_convertDATA_cogtiff_4band_to_3band.py` direkt mit OSGeo4W Python ausgeführt werden:
 
 ```bash
-C:\OSGeo4W\bin\python3.exe convertDATA_cogtiff_4band_to_3band.py
+C:\OSGeo4W\bin\python3.exe 02_convertDATA_cogtiff_4band_to_3band.py
 ```
 
 Konfiguration direkt im Script-Kopf anpassen (`INPUT_PATH`, `OUTPUT_PATH`, `OUTPUT_BANDS`).
@@ -105,7 +105,7 @@ Konfiguration direkt im Script-Kopf anpassen (`INPUT_PATH`, `OUTPUT_PATH`, `OUTP
 ## Architektur
 
 ```
-GUI_cogtiff_4band_to_3band.py   (Standard-Python, tkinter)
+01_GUI_cogtiff_4band_to_3band.py   (Standard-Python, tkinter)
         │
         │  JSON-Config (tempfile)
         ▼
