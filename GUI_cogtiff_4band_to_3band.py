@@ -543,68 +543,120 @@ class BandKonverterApp(tk.Tk):
             self._info_bands.config(text="OSGeo4W Python nicht gefunden – bitte Pfad setzen")
             return
 
-        try:
-            cfg = {"action": "info", "input_path": src}
-            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
-                                             encoding="utf-8") as tmp:
-                json.dump(cfg, tmp, ensure_ascii=False)
-                tmp_name = tmp.name
+        def ui_error(msg):
             try:
-                env = os.environ.copy()
-                env["PYTHONHOME"] = _detect_python_home(self._osgeo_python)
-                result = subprocess.run(
-                    [self._osgeo_python, RUNNER_SCRIPT, tmp_name],
-                    capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", env=env,
-                )
-            finally:
+                from tkinter import messagebox
+                messagebox.showerror("Datei-Info Fehler", msg, parent=self)
+            except Exception:
+                pass
+            for attr in ("_info_bands", "_info_colorinterp", "_info_res",
+                         "_info_dtype", "_info_crs", "_info_size"):
                 try:
-                    os.unlink(tmp_name)
-                except OSError:
+                    getattr(self, attr).config(text="–")
+                except Exception:
+                    pass
+            try:
+                self._warn_alpha.grid_remove()
+            except Exception:
+                pass
+
+        def ui_info(info):
+            try:
+                bc = info.get("bands")
+                ci = info.get("colorinterp", [])
+                ci_parts = ["B{}:{}".format(i+1, c) for i, c in enumerate(ci)]
+                alpha_bands = info.get("alpha_bands", [])
+                nd_raw = info.get("nodata")
+
+                self._info_bands.config(text=str(bc))
+                if bc != 4:
+                    try:
+                        from tkinter import messagebox
+                        messagebox.showerror("Input-Fehler: falsche Bandanzahl",
+                                             "Input-Datei enthält {} Band(ä) — erwartet werden 4 Bänder.".format(bc),
+                                             parent=self)
+                    except Exception:
+                        pass
+                    try:
+                        T = DARK if self._dark else LIGHT
+                        self._info_bands.config(foreground=T["err"])
+                    except Exception:
+                        pass
+                    return
+
+                self._info_colorinterp.config(text="  ".join(ci_parts))
+                self._info_res.config(text="{} × {} px".format(info.get('width'), info.get('height')))
+                self._info_dtype.config(text=info.get("dtype", "–"))
+                self._info_crs.config(text=info.get("crs", "–"))
+                try:
+                    self._info_size.config(text="{:.1f} MB".format(info.get('size_mb', 0.0)))
+                except Exception:
                     pass
 
-            if result.returncode != 0:
-                raise RuntimeError((result.stdout + result.stderr).strip())
+                T = DARK if self._dark else LIGHT
+                if nd_raw is not None:
+                    try:
+                        nd_val = float(nd_raw)
+                        nd_str = str(int(nd_val)) if nd_val == int(nd_val) else str(nd_val)
+                        self._nodata_var.set(nd_str)
+                        self._nodata_status_lbl.config(text="✔ aus Quelldatei erkannt ({})".format(nd_str), foreground=T["ok"])
+                    except Exception:
+                        pass
+                elif alpha_bands:
+                    try:
+                        self._nodata_var.set("0")
+                        self._nodata_status_lbl.config(text="⚠ Alpha-Band erkannt → 0 empfohlen", foreground=T["hint"])
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        self._nodata_status_lbl.config(text="nicht in Datei gesetzt – bitte manuell prüfen", foreground=T["fg_dim"])
+                    except Exception:
+                        pass
 
-            info = json.loads(result.stdout.strip())
+                if alpha_bands:
+                    try:
+                        self._warn_alpha.grid()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        self._warn_alpha.grid_remove()
+                    except Exception:
+                        pass
+            except Exception:
+                ui_error("Fehler beim Darstellen der Datei-Info")
 
-            bc          = info["bands"]
-            ci_parts    = [f"B{i+1}:{ci}" for i, ci in enumerate(info["colorinterp"])]
-            alpha_bands = info["alpha_bands"]
-            nd_raw      = info["nodata"]
+        def worker():
+            tmp_name = None
+            try:
+                cfg = {"action": "info", "input_path": src}
+                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
+                    json.dump(cfg, tmp, ensure_ascii=False)
+                    tmp_name = tmp.name
+                env = os.environ.copy()
+                env["PYTHONHOME"] = _detect_python_home(self._osgeo_python)
+                result = subprocess.run([self._osgeo_python, RUNNER_SCRIPT, tmp_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, env=env)
+                try:
+                    if tmp_name and os.path.exists(tmp_name):
+                        os.unlink(tmp_name)
+                except Exception:
+                    pass
+                if result.returncode != 0:
+                    err = (result.stdout or "") + "\n" + (result.stderr or "")
+                    self.after(0, ui_error, err.strip())
+                    return
+                info = json.loads(result.stdout.strip() or "{}")
+                self.after(0, ui_info, info)
+            except Exception as e:
+                try:
+                    if tmp_name and os.path.exists(tmp_name):
+                        os.unlink(tmp_name)
+                except Exception:
+                    pass
+                self.after(0, ui_error, str(e))
 
-            self._info_bands.config(text=str(bc))
-            self._info_colorinterp.config(text="  ".join(ci_parts))
-            self._info_res.config(text=f"{info['width']} × {info['height']} px")
-            self._info_dtype.config(text=info["dtype"])
-            self._info_crs.config(text=info["crs"])
-            self._info_size.config(text=f"{info['size_mb']:.1f} MB")
-
-            T = DARK if self._dark else LIGHT
-            if nd_raw is not None:
-                nd_val = float(nd_raw)
-                nd_str = str(int(nd_val)) if nd_val == int(nd_val) else str(nd_val)
-                self._nodata_var.set(nd_str)
-                self._nodata_status_lbl.config(
-                    text=f"✔ aus Quelldatei erkannt ({nd_str})",
-                    foreground=T["ok"])
-            elif alpha_bands:
-                self._nodata_var.set("0")
-                self._nodata_status_lbl.config(
-                    text="⚠ Alpha-Band erkannt → 0 empfohlen",
-                    foreground=T["hint"])
-            else:
-                self._nodata_status_lbl.config(
-                    text="nicht in Datei gesetzt – bitte manuell prüfen",
-                    foreground=T["fg_dim"])
-
-            if alpha_bands:
-                self._warn_alpha.grid()
-            else:
-                self._warn_alpha.grid_remove()
-
-        except Exception as e:
-            self._info_bands.config(text=f"Fehler: {e}")
+        threading.Thread(target=worker, daemon=True).start()
 
     # ── Theme ──────────────────────────────────────────────────────────────────
     def _toggle_theme(self):
