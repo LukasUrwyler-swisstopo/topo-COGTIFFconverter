@@ -40,7 +40,7 @@ python GUI_cogtiff_4band_to_3band.py
 
 Beim ersten Start erkennt das GUI automatisch die OSGeo4W-Installation. Der Pfad kann über die Schaltfläche **Ändern…** manuell gesetzt und wird in `_cogtiff_config.json` gespeichert.
 
-![GUI Screenshot — Dark Mode](docs/screenshot_dark.png)
+<img width="1222" height="1360" alt="image" src="https://github.com/user-attachments/assets/fa7257c5-dab4-4c46-93dd-d6b37ba67966" />
 
 ---
 
