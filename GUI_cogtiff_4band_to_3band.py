@@ -7,6 +7,8 @@ Anforderungen:
     Python + GDAL (osgeo4w): gdal >= 3.1 (COG-Driver)
 """
 
+from __future__ import annotations
+
 import ctypes
 import logging
 import os
