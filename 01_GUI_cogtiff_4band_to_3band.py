@@ -286,7 +286,7 @@ class BandKonverterApp(tk.Tk):
                     command=self._browse_input
                     ).grid(row=0, column=2, pady=3)
 
-        in_hint = ttk.Label(sec, text="COG-TIFF, GeoTIFF  (.tif / .tiff)",
+        in_hint = ttk.Label(sec, text="COG-TIFF  (.tif / .tiff)",
                              font=("", 8))
         in_hint.grid(row=1, column=1, sticky="w", padx=(8, 0))
         self._dim_labels.append(in_hint)
