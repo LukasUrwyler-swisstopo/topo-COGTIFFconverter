@@ -939,6 +939,8 @@ class BandKonverterApp(tk.Tk):
         try:
             env = os.environ.copy()
             env["PYTHONHOME"] = _detect_python_home(self._osgeo_python)
+            # Ensure subprocess prints UTF-8 so Windows cp1252 won't raise on special chars
+            env["PYTHONIOENCODING"] = "utf-8"
             header = f"[Subprocess] {self._osgeo_python}\n\n"
             self._log_q.put(header)
             proc = subprocess.Popen(
