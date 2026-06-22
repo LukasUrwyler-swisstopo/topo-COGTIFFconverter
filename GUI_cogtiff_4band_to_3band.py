@@ -7,8 +7,6 @@ Das GUI läuft mit Standard-Python (kein osgeo erforderlich).
 GDAL-Operationen werden via _osgeo_runner.py als Subprocess ausgeführt.
 """
 
-from __future__ import annotations
-
 import ctypes
 import datetime
 import glob as _glob
@@ -24,6 +22,7 @@ import traceback
 import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext
 from pathlib import Path
+from typing import List, Tuple, Dict
 
 # ─── Pfade ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
@@ -51,7 +50,7 @@ def _detect_osgeo_python() -> str:
         pass
 
     # 3. Bekannte Installationspfade
-    kandidaten: list[str] = []
+    kandidaten: List[str] = []
     osgeo_root = os.environ.get("OSGEO4W_ROOT")
     if osgeo_root:
         kandidaten.append(str(Path(osgeo_root) / "bin" / "python3.exe"))
@@ -84,7 +83,7 @@ def _detect_python_home(python_exe: str) -> str:
 
 def _save_osgeo_config(path: str) -> None:
     try:
-        cfg: dict = {}
+        cfg: Dict = {}
         if os.path.isfile(CONFIG_FILE):
             with open(CONFIG_FILE, encoding="utf-8") as f:
                 cfg = json.load(f)
@@ -459,7 +458,7 @@ class BandKonverterApp(tk.Tk):
         self._canvas.yview_scroll(-1*(event.delta//120), "units")
         return "break"
 
-    def _apply_preset(self, labels: list, bands: list):
+    def _apply_preset(self, labels: List, bands: List):
         self._labels_var.set(", ".join(labels))
         self._bands_var.set(", ".join(str(b) for b in bands))
         self._update_preview()
@@ -745,7 +744,7 @@ class BandKonverterApp(tk.Tk):
             self._log("\n✘  Konvertierung fehlgeschlagen.\n")
 
     # ── Validierung ───────────────────────────────────────────────────────────
-    def _validate(self) -> tuple[bool, str, list[int], list[str]]:
+    def _validate(self) -> Tuple[bool, str, List[int], List[str]]:
         errors = []
         inp = self._in_var.get().strip()
         out = self._out_var.get().strip()
