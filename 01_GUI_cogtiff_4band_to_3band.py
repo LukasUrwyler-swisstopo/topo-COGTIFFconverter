@@ -1,5 +1,5 @@
 """
-GUI_cogtiff_4band_to_3band.py  –  COGTIFF Band-Konverter GUI
+01_GUI_cogtiff_4band_to_3band.py  –  COGTIFF Band-Konverter GUI
 Tkinter-Oberfläche für den flexiblen Band-Konverter (RGBN → RGB / NRG usw.).
 Styling analog zu 0_main_GDWH_import_GUI.py.
 
@@ -330,8 +330,8 @@ class BandKonverterApp(tk.Tk):
         # Alpha-Warnung (anfangs versteckt)
         self._warn_alpha = ttk.Label(
             sec,
-            text="⚠  Band 4 hat ColorInterp=Alpha → Transparenzmaske fällt beim Extrahieren weg."
-                 "  NoData=0 wird automatisch gesetzt.",
+            text="⚠  NoData-Wert '0 0 0' oder '255 255 255'; prüfen"
+                 "  NoData '0 0 0' wird automatisch gesetzt. Allenfalls unter COG-Optionen anpassen.",
             font=("Segoe UI", 8, "italic"), wraplength=560, justify="left",
         )
         self._warn_alpha.grid(row=len(fields), column=0, columnspan=2,
@@ -605,7 +605,7 @@ class BandKonverterApp(tk.Tk):
                 elif alpha_bands:
                     try:
                         self._nodata_var.set("0")
-                        self._nodata_status_lbl.config(text="⚠ Alpha-Band erkannt → 0 empfohlen", foreground=T["hint"])
+                        self._nodata_status_lbl.config(text="⚠ Background Pixel → 0 (default 0 0 0): Prüfen welche Background-Pixel das Input-COG enthält", foreground=T["hint"])
                     except Exception:
                         pass
                 else:
