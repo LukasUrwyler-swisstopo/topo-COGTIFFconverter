@@ -3,24 +3,97 @@ GUI_cogtiff_4band_to_3band.py  –  COGTIFF Band-Konverter GUI
 Tkinter-Oberfläche für den flexiblen Band-Konverter (RGBN → RGB / NRG usw.).
 Styling analog zu 0_main_GDWH_import_GUI.py.
 
-Anforderungen:
-    Python + GDAL (osgeo4w): gdal >= 3.1 (COG-Driver)
+Das GUI läuft mit Standard-Python (kein osgeo erforderlich).
+GDAL-Operationen werden via _osgeo_runner.py als Subprocess ausgeführt.
 """
 
 from __future__ import annotations
 
 import ctypes
-import logging
+import datetime
+import glob as _glob
+import importlib.util
+import json
 import os
 import queue
+import subprocess
 import sys
+import tempfile
 import threading
 import traceback
 import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext
 from pathlib import Path
 
-from osgeo import gdal
+# ─── Pfade ────────────────────────────────────────────────────────────────────
+SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
+RUNNER_SCRIPT = os.path.join(SCRIPT_DIR, "_osgeo_runner.py")
+CONFIG_FILE   = os.path.join(SCRIPT_DIR, "_cogtiff_config.json")
+
+# ─── OSGeo4W Python Erkennung ─────────────────────────────────────────────────
+def _detect_osgeo_python() -> str:
+    """Gibt den Pfad zum OSGeo4W Python zurück (aus Config, System-Python oder bekannten Pfaden)."""
+    # 1. Gespeicherte Konfiguration
+    if os.path.isfile(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, encoding="utf-8") as f:
+                path = json.load(f).get("osgeo_python", "")
+            if path and os.path.isfile(path):
+                return path
+        except Exception:
+            pass
+
+    # 2. osgeo im aktuellen Python verfügbar → kein Subprocess nötig
+    try:
+        if importlib.util.find_spec("osgeo") is not None:
+            return sys.executable
+    except Exception:
+        pass
+
+    # 3. Bekannte Installationspfade
+    kandidaten: list[str] = []
+    osgeo_root = os.environ.get("OSGEO4W_ROOT")
+    if osgeo_root:
+        kandidaten.append(str(Path(osgeo_root) / "bin" / "python3.exe"))
+    kandidaten += [
+        r"C:\OSGeo4W\bin\python3.exe",
+        r"C:\OSGeo4W64\bin\python3.exe",
+    ]
+    for pat in [
+        r"C:\Program Files\QGIS*\bin\python3.exe",
+        r"C:\Program Files (x86)\QGIS*\bin\python3.exe",
+    ]:
+        kandidaten.extend(sorted(_glob.glob(pat), reverse=True))
+
+    return next((p for p in kandidaten if Path(p).is_file()), "")
+
+
+def _detect_python_home(python_exe: str) -> str:
+    """Leitet PYTHONHOME vom Python-Executable ab (QGIS: apps\\PythonXXX, OSGeo4W: root)."""
+    bin_dir  = os.path.dirname(python_exe)
+    root_dir = os.path.dirname(bin_dir)
+    apps_dir = os.path.join(root_dir, "apps")
+    if os.path.isdir(apps_dir):
+        for name in sorted(os.listdir(apps_dir), reverse=True):
+            if name.lower().startswith("python"):
+                candidate = os.path.join(apps_dir, name)
+                if os.path.isdir(candidate):
+                    return candidate
+    return root_dir
+
+
+def _save_osgeo_config(path: str) -> None:
+    try:
+        cfg: dict = {}
+        if os.path.isfile(CONFIG_FILE):
+            with open(CONFIG_FILE, encoding="utf-8") as f:
+                cfg = json.load(f)
+        cfg["osgeo_python"] = path
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
 
 # ─── Farbpaletten (identisch zu GDWH GUI) ─────────────────────────────────────
 LIGHT = {
@@ -88,15 +161,6 @@ class _QueueWriter:
         pass
 
 
-class _QueueLoggingHandler(logging.Handler):
-    def __init__(self, q: queue.Queue):
-        super().__init__()
-        self.q = q
-
-    def emit(self, record):
-        self.q.put(self.format(record) + "\n")
-
-
 # ─── Haupt-App ─────────────────────────────────────────────────────────────────
 class BandKonverterApp(tk.Tk):
 
@@ -115,6 +179,10 @@ class BandKonverterApp(tk.Tk):
 
         self._dim_labels    = []
         self._accent_labels = []
+
+        self._osgeo_python = _detect_osgeo_python()
+        self._osgeo_lbl    = None
+        self._osgeo_status = None
 
         self._build_ui()
         self._apply_theme(True)   # Dark Mode als Standard
@@ -136,6 +204,21 @@ class BandKonverterApp(tk.Tk):
                                      font=("", 9), cursor="hand2",
                                      padx=10, pady=4)
         self._theme_btn.pack(side="right", padx=12)
+
+        # OSGeo4W Python Zeile
+        self._osgeo_frame = ttk.Frame(self)
+        self._osgeo_frame.pack(fill="x", padx=12, pady=(6, 0))
+        osgeo_lbl_static = ttk.Label(self._osgeo_frame, text="OSGeo4W Python:",
+                                      font=("Segoe UI", 9))
+        osgeo_lbl_static.pack(side="left")
+        self._dim_labels.append(osgeo_lbl_static)
+        self._osgeo_lbl = ttk.Label(self._osgeo_frame, font=("Courier New", 8),
+                                     text=self._osgeo_python or "(nicht gefunden)")
+        self._osgeo_lbl.pack(side="left", padx=(6, 0))
+        self._osgeo_status = ttk.Label(self._osgeo_frame, font=("Segoe UI", 8, "bold"))
+        self._osgeo_status.pack(side="left", padx=(6, 0))
+        ttk.Button(self._osgeo_frame, text="Ändern…",
+                    command=self._set_osgeo_python).pack(side="right")
 
         # Scrollbarer Formular-Bereich
         outer = ttk.Frame(self)
@@ -334,7 +417,7 @@ class BandKonverterApp(tk.Tk):
             sec, textvariable=self._compress_var,
             values=["DEFLATE", "LZW", "ZSTD", "NONE"], state="readonly", width=10))
 
-        self._blocksize_var = tk.StringVar(value="512")
+        self._blocksize_var = tk.StringVar(value="256")
         _row(0, 1, "Kachelgrösse:", lambda: ttk.Combobox(
             sec, textvariable=self._blocksize_var,
             values=["256", "512", "1024"], state="readonly", width=8))
@@ -405,7 +488,6 @@ class BandKonverterApp(tk.Tk):
         if path:
             path = path.replace("/", "\\")
             self._in_var.set(path)
-            # Output-Pfad automatisch vorschlagen
             p = Path(path)
             self._out_var.set(str(p.parent / (p.stem + "_RGB" + p.suffix)))
             self._refresh_info()
@@ -423,6 +505,32 @@ class BandKonverterApp(tk.Tk):
         if path:
             self._out_var.set(path.replace("/", "\\"))
 
+    # ── OSGeo4W Python Verwaltung ──────────────────────────────────────────────
+    def _update_osgeo_label(self):
+        T = DARK if self._dark else LIGHT
+        if self._osgeo_python and os.path.isfile(self._osgeo_python):
+            self._osgeo_lbl.config(text=self._osgeo_python)
+            self._osgeo_status.config(text="✓", foreground=T["ok"])
+        else:
+            self._osgeo_lbl.config(text=self._osgeo_python or "(nicht gefunden)")
+            self._osgeo_status.config(text="✗ nicht gefunden", foreground=T["err"])
+
+    def _set_osgeo_python(self):
+        init_dir = os.path.dirname(self._osgeo_python) if self._osgeo_python else r"C:\OSGeo4W\bin"
+        if not os.path.isdir(init_dir):
+            init_dir = "C:\\"
+        path = filedialog.askopenfilename(
+            title="OSGeo4W Python auswählen",
+            initialdir=init_dir,
+            filetypes=[("Python", "python*.exe"), ("Executable", "*.exe"), ("Alle", "*.*")],
+        )
+        if path:
+            path = path.replace("/", "\\")
+            self._osgeo_python = path
+            _save_osgeo_config(path)
+            self._update_osgeo_label()
+
+    # ── Datei-Info via Runner ──────────────────────────────────────────────────
     def _refresh_info(self):
         src = self._in_var.get().strip()
         if not src or not os.path.isfile(src):
@@ -431,46 +539,51 @@ class BandKonverterApp(tk.Tk):
                 getattr(self, attr).config(text="–")
             self._warn_alpha.grid_remove()
             return
+
+        if not self._osgeo_python or not os.path.isfile(self._osgeo_python):
+            self._info_bands.config(text="OSGeo4W Python nicht gefunden – bitte Pfad setzen")
+            return
+
         try:
-            gdal.UseExceptions()
-            ds = gdal.Open(src, gdal.GA_ReadOnly)
-            if ds is None:
-                raise RuntimeError("GDAL konnte die Datei nicht öffnen.")
-            bc   = ds.RasterCount
-            rx   = ds.RasterXSize
-            ry   = ds.RasterYSize
-            dt   = gdal.GetDataTypeName(ds.GetRasterBand(1).DataType)
-            srs  = ds.GetSpatialRef()
-            crs  = srs.GetName() if srs else "nicht gesetzt"
-            size = os.path.getsize(src) / (1024**2)
+            cfg = {"action": "info", "input_path": src}
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                             encoding="utf-8") as tmp:
+                json.dump(cfg, tmp, ensure_ascii=False)
+                tmp_name = tmp.name
+            try:
+                env = os.environ.copy()
+                env["PYTHONHOME"] = _detect_python_home(self._osgeo_python)
+                result = subprocess.run(
+                    [self._osgeo_python, RUNNER_SCRIPT, tmp_name],
+                    capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", env=env,
+                )
+            finally:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
 
-            # ColorInterp je Band ermitteln + Alpha-Bänder identifizieren
-            ci_parts    = []
-            alpha_bands = []
-            for i in range(1, bc + 1):
-                band = ds.GetRasterBand(i)
-                ci   = gdal.GetColorInterpretationName(band.GetColorInterpretation())
-                ci_parts.append(f"B{i}:{ci}")
-                if ci == "Alpha":
-                    alpha_bands.append(i)
+            if result.returncode != 0:
+                raise RuntimeError((result.stdout + result.stderr).strip())
 
-            # NoData aus Band 1 lesen – vor ds=None
-            nd_raw = ds.GetRasterBand(1).GetNoDataValue()
-            ds = None
+            info = json.loads(result.stdout.strip())
+
+            bc          = info["bands"]
+            ci_parts    = [f"B{i+1}:{ci}" for i, ci in enumerate(info["colorinterp"])]
+            alpha_bands = info["alpha_bands"]
+            nd_raw      = info["nodata"]
 
             self._info_bands.config(text=str(bc))
             self._info_colorinterp.config(text="  ".join(ci_parts))
-            self._info_res.config(text=f"{rx} × {ry} px")
-            self._info_dtype.config(text=dt)
-            self._info_crs.config(text=crs)
-            self._info_size.config(text=f"{size:.1f} MB")
+            self._info_res.config(text=f"{info['width']} × {info['height']} px")
+            self._info_dtype.config(text=info["dtype"])
+            self._info_crs.config(text=info["crs"])
+            self._info_size.config(text=f"{info['size_mb']:.1f} MB")
 
-            # NoData auto-erkennung: nd_raw wurde oben vor ds=None gelesen
             T = DARK if self._dark else LIGHT
-            nd_val = nd_raw
-
-            if nd_val is not None:
-                # Ganzzahligen Wert ohne Nachkommastellen anzeigen
+            if nd_raw is not None:
+                nd_val = float(nd_raw)
                 nd_str = str(int(nd_val)) if nd_val == int(nd_val) else str(nd_val)
                 self._nodata_var.set(nd_str)
                 self._nodata_status_lbl.config(
@@ -486,7 +599,6 @@ class BandKonverterApp(tk.Tk):
                     text="nicht in Datei gesetzt – bitte manuell prüfen",
                     foreground=T["fg_dim"])
 
-            # Alpha-Warnung anzeigen
             if alpha_bands:
                 self._warn_alpha.grid()
             else:
@@ -581,6 +693,9 @@ class BandKonverterApp(tk.Tk):
             try: lbl.configure(foreground=T["hint"])
             except tk.TclError: pass
 
+        if self._osgeo_lbl is not None:
+            self._update_osgeo_label()
+
         self._set_titlebar_dark(dark)
 
     def _set_titlebar_dark(self, dark: bool):
@@ -634,6 +749,12 @@ class BandKonverterApp(tk.Tk):
         errors = []
         inp = self._in_var.get().strip()
         out = self._out_var.get().strip()
+
+        if not self._osgeo_python or not os.path.isfile(self._osgeo_python):
+            errors.append(
+                "OSGeo4W Python nicht gefunden.\n"
+                "Bitte Pfad via 'Ändern…' festlegen  (z.B. C:\\OSGeo4W\\bin\\python3.exe)."
+            )
 
         if not inp:
             errors.append("Input-Datei fehlt.")
@@ -695,143 +816,71 @@ class BandKonverterApp(tk.Tk):
 
     def _run_thread(self, inp, out, bands, labels,
                     compress, block, ovr, resamp, nodata):
-        # Logging auf Queue umleiten
-        handler = _QueueLoggingHandler(self._log_q)
-        handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-        root_logger = logging.getLogger()
-        root_logger.addHandler(handler)
-        root_logger.setLevel(logging.INFO)
-
         try:
-            _convert(
-                input_path=inp,
-                output_path=out,
-                output_bands=bands,
-                input_band_labels=labels,
-                compress=compress,
-                blocksize=block,
-                overviews=ovr,
-                overview_resampling=resamp,
-                nodata=nodata,
-                log_queue=self._log_q,
-            )
+            self._exec_with_osgeo(inp, out, bands, labels,
+                                   compress, block, ovr, resamp, nodata)
             self.after(0, self._on_done, True)
         except Exception as e:
             self._log_q.put(f"\n[FEHLER] {e}\n")
             self._log_q.put(traceback.format_exc())
             self.after(0, self._on_done, False)
+
+    def _exec_with_osgeo(self, inp, out, bands, labels,
+                          compress, block, ovr, resamp, nodata):
+        """Startet _osgeo_runner.py als Subprocess mit OSGeo4W Python."""
+        cfg = {
+            "action":               "convert",
+            "input_path":           inp,
+            "output_path":          out,
+            "output_bands":         bands,
+            "input_band_labels":    labels,
+            "compress":             compress,
+            "blocksize":            block,
+            "overviews":            ovr,
+            "overview_resampling":  resamp,
+            "nodata":               nodata,
+        }
+
+        # Log-Datei vorbereiten
+        logs_dir  = Path(SCRIPT_DIR) / "logs"
+        logs_dir.mkdir(exist_ok=True)
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        log_path  = logs_dir / f"{Path(out).stem}_{timestamp}.log"
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                         encoding="utf-8") as tmp:
+            json.dump(cfg, tmp, ensure_ascii=False, indent=2)
+            tmp_name = tmp.name
+        try:
+            env = os.environ.copy()
+            env["PYTHONHOME"] = _detect_python_home(self._osgeo_python)
+            header = f"[Subprocess] {self._osgeo_python}\n\n"
+            self._log_q.put(header)
+            proc = subprocess.Popen(
+                [self._osgeo_python, RUNNER_SCRIPT, tmp_name],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+            )
+            with open(log_path, "w", encoding="utf-8") as lf:
+                lf.write(header)
+                for line in proc.stdout:
+                    self._log_q.put(line)
+                    lf.write(line)
+            proc.wait()
+            self._log_q.put(f"\nLog gespeichert: {log_path}\n")
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"OSGeo4W Subprocess beendet mit Exit-Code {proc.returncode}"
+                )
         finally:
-            root_logger.removeHandler(handler)
-
-
-# ─── Konvertierungsfunktion (standalone, GUI-unabhängig) ──────────────────────
-def _convert(
-    input_path: str,
-    output_path: str,
-    output_bands: list,
-    input_band_labels: list,
-    compress: str = "DEFLATE",
-    blocksize: str = "512",
-    overviews: str = "AUTO",
-    overview_resampling: str = "LANCZOS",
-    nodata: str = "",
-    log_queue: queue.Queue | None = None,
-) -> None:
-
-    def _log(msg: str):
-        if log_queue:
-            log_queue.put(msg + "\n")
-
-    gdal.UseExceptions()
-
-    _log(f"Öffne Quelldatei: {input_path}")
-    src_ds = gdal.Open(input_path, gdal.GA_ReadOnly)
-    if src_ds is None:
-        raise FileNotFoundError(f"GDAL konnte die Datei nicht öffnen: {input_path}")
-
-    band_count = src_ds.RasterCount
-    dtype      = src_ds.GetRasterBand(1).DataType
-    srs        = src_ds.GetSpatialRef()
-
-    _log(f"  Bänder gesamt : {band_count}")
-    _log(f"  Auflösung     : {src_ds.RasterXSize} × {src_ds.RasterYSize} px")
-    _log(f"  Datentyp      : {gdal.GetDataTypeName(dtype)}")
-    _log(f"  Koordinatensys: {srs.GetName() if srs else 'nicht gesetzt'}")
-
-    labels = list(input_band_labels) or [f"Band{i}" for i in range(1, band_count + 1)]
-    while len(labels) < band_count:
-        labels.append(f"Band{len(labels)+1}")
-
-    # ColorInterp je Band + Warnung bei wegfallendem Alpha-Band
-    color_interps = [
-        gdal.GetColorInterpretationName(src_ds.GetRasterBand(i).GetColorInterpretation())
-        for i in range(1, band_count + 1)
-    ]
-    _log(f"  Quellbänder   : { {i+1: f'{labels[i]} ({color_interps[i]})' for i in range(band_count)} }")
-
-    dropped = [b for b in range(1, band_count + 1) if b not in output_bands]
-    for b in dropped:
-        if color_interps[b - 1] == "Alpha":
-            _log(f"  ⚠ WARNUNG     : Band {b} hat ColorInterp=Alpha – Transparenzmaske fällt weg. "
-                 f"NoData={'«' + nodata + '»' if nodata else 'nicht gesetzt'}.")
-
-    if any(b < 1 or b > band_count for b in output_bands):
-        raise ValueError(
-            f"Ungültige Band-Indizes {output_bands} – "
-            f"Quelldatei hat {band_count} Bänder (erlaubt: 1–{band_count})."
-        )
-
-    out_labels = [labels[b-1] for b in output_bands]
-    _log(f"  Ausgabebänder : {dict(enumerate(out_labels, 1))}  (Quellindizes: {output_bands})")
-
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-
-    nodata_val = float(nodata) if nodata.strip() else None
-    cog_options = [
-        f"COMPRESS={compress}",
-        "PREDICTOR=2",
-        f"BLOCKSIZE={blocksize}",
-        f"OVERVIEWS={overviews}",
-        f"OVERVIEW_RESAMPLING={overview_resampling}",
-        "BIGTIFF=IF_SAFER",
-    ]
-
-    _log(f"\nSchreibe COGTIFF: {output_path}")
-    _log(f"  Kompression   : {compress}, Kachelgrösse: {blocksize}")
-    _log(f"  Overviews     : {overviews}  ({overview_resampling})")
-    _log(f"  NoData        : {nodata_val if nodata_val is not None else '(nicht gesetzt)'}")
-
-    translate_options = gdal.TranslateOptions(
-        bandList=output_bands,
-        format="COG",
-        creationOptions=cog_options,
-        noData=nodata_val,
-    )
-
-    out_ds = gdal.Translate(output_path, src_ds, options=translate_options)
-    if out_ds is None:
-        raise RuntimeError("gdal.Translate hat None zurückgegeben – Ausgabe fehlgeschlagen.")
-
-    out_ds.FlushCache()
-    out_ds = None
-    src_ds = None
-
-    # Verifikation
-    verify_ds = gdal.Open(output_path, gdal.GA_ReadOnly)
-    if verify_ds is None:
-        raise RuntimeError(f"Ausgabedatei konnte nicht geöffnet werden: {output_path}")
-
-    _log("\nVerifikation:")
-    _log(f"  Bänder        : {verify_ds.RasterCount}")
-    _log(f"  Auflösung     : {verify_ds.RasterXSize} × {verify_ds.RasterYSize} px")
-    _log(f"  Datentyp      : {gdal.GetDataTypeName(verify_ds.GetRasterBand(1).DataType)}")
-
-    size_in  = Path(input_path).stat().st_size  / (1024**2)
-    size_out = Path(output_path).stat().st_size / (1024**2)
-    _log(f"  Dateigrösse   : {size_in:.1f} MB  →  {size_out:.1f} MB")
-
-    verify_ds = None
-    _log("Fertig.")
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
