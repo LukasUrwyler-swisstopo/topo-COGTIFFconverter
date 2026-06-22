@@ -1,14 +1,15 @@
 """
 01_GUI_cogtiff_4band_to_3band.py  –  COGTIFF Band-Konverter GUI
-Tkinter-Oberfläche für den flexiblen Band-Konverter (RGBN → RGB / NRG usw.).
+Tkinter-Oberflaeche fuer den flexiblen Band-Konverter (RGBN → RGB / NRG usw.).
 Styling analog zu 0_main_GDWH_import_GUI.py.
 
-Das GUI läuft mit Standard-Python (kein osgeo erforderlich).
-GDAL-Operationen werden via _osgeo_runner.py als Subprocess ausgeführt.
+Das GUI laeuft mit Standard-Python (kein osgeo erforderlich).
+GDAL-Operationen werden via _osgeo_runner.py als Subprocess ausgefuehrt.
 """
 
 import ctypes
 import datetime
+import time
 import glob as _glob
 import importlib.util
 import json
@@ -31,7 +32,7 @@ CONFIG_FILE   = os.path.join(SCRIPT_DIR, "_cogtiff_config.json")
 
 # ─── OSGeo4W Python Erkennung ─────────────────────────────────────────────────
 def _detect_osgeo_python() -> str:
-    """Gibt den Pfad zum OSGeo4W Python zurück (aus Config, System-Python oder bekannten Pfaden)."""
+    """Gibt den Pfad zum OSGeo4W Python zurueck (aus Config, System-Python oder bekannten Pfaden)."""
     # 1. Gespeicherte Konfiguration
     if os.path.isfile(CONFIG_FILE):
         try:
@@ -42,7 +43,7 @@ def _detect_osgeo_python() -> str:
         except Exception:
             pass
 
-    # 2. osgeo im aktuellen Python verfügbar → kein Subprocess nötig
+    # 2. osgeo im aktuellen Python verfuegbar → kein Subprocess noetig
     try:
         if importlib.util.find_spec("osgeo") is not None:
             return sys.executable
@@ -216,7 +217,7 @@ class BandKonverterApp(tk.Tk):
         self._osgeo_lbl.pack(side="left", padx=(6, 0))
         self._osgeo_status = ttk.Label(self._osgeo_frame, font=("Segoe UI", 8, "bold"))
         self._osgeo_status.pack(side="left", padx=(6, 0))
-        ttk.Button(self._osgeo_frame, text="Ändern…",
+        ttk.Button(self._osgeo_frame, text="Aendern…",
                     command=self._set_osgeo_python).pack(side="right")
 
         # Scrollbarer Formular-Bereich
@@ -252,12 +253,12 @@ class BandKonverterApp(tk.Tk):
             font=("Courier New", 9))
         self._log_box.pack(fill="both", expand=True)
 
-        # Fortschrittsbalken (versteckt bis Import läuft)
+        # Fortschrittsbalken (versteckt bis Import laeuft)
         self._progress_frame = ttk.Frame(self)
         self._progress_bar   = ttk.Progressbar(self._progress_frame, mode="indeterminate")
         self._progress_bar.pack(side="left", fill="x", expand=True, padx=(0, 8))
         self._progress_lbl = ttk.Label(self._progress_frame,
-                                        text="Konvertierung läuft…", font=("", 9))
+                                        text="Konvertierung laeuft…", font=("", 9))
         self._progress_lbl.pack(side="left")
 
         # Buttons
@@ -266,7 +267,7 @@ class BandKonverterApp(tk.Tk):
         self._start_btn = ttk.Button(self._btn_row, text="▶   KONVERTIEREN",
                                       command=self._start)
         self._start_btn.pack(side="right", ipadx=22, ipady=7)
-        ttk.Button(self._btn_row, text="Log löschen",
+        ttk.Button(self._btn_row, text="Log loeschen",
                     command=self._clear_log).pack(side="right", padx=(0, 10))
 
     def _build_dateien(self, parent):
@@ -312,12 +313,12 @@ class BandKonverterApp(tk.Tk):
         sec.columnconfigure(1, weight=1)
 
         fields = [
-            ("Bänder:",           "_info_bands"),
+            ("Baender:",           "_info_bands"),
             ("ColorInterp:",      "_info_colorinterp"),
-            ("Auflösung:",        "_info_res"),
+            ("Aufloesung:",        "_info_res"),
             ("Datentyp:",         "_info_dtype"),
             ("Koordinatensys.:",  "_info_crs"),
-            ("Dateigrösse:",      "_info_size"),
+            ("Dateigroesse:",      "_info_size"),
         ]
         for row, (label, attr) in enumerate(fields):
             lbl = ttk.Label(sec, text=label, font=("Segoe UI", 9, "bold"))
@@ -330,7 +331,7 @@ class BandKonverterApp(tk.Tk):
         # Alpha-Warnung (anfangs versteckt)
         self._warn_alpha = ttk.Label(
             sec,
-            text="⚠  NoData-Wert '0 0 0' oder '255 255 255'; prüfen"
+            text="⚠  NoData-Wert '0 0 0' oder '255 255 255'; pruefen"
                  "  NoData '0 0 0' wird automatisch gesetzt. Allenfalls unter COG-Optionen anpassen.",
             font=("Segoe UI", 8, "italic"), wraplength=560, justify="left",
         )
@@ -367,13 +368,13 @@ class BandKonverterApp(tk.Tk):
         self._labels_var = tk.StringVar(value="R, G, B, N")
         ttk.Entry(sec, textvariable=self._labels_var, width=30
                    ).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=3)
-        h1 = ttk.Label(sec, text="Kommagetrennte Bezeichnungen der Quellbänder  (z.B.  R, G, B, N  oder  N, R, G, B)",
+        h1 = ttk.Label(sec, text="Kommagetrennte Bezeichnungen der Quellbaender  (z.B.  R, G, B, N  oder  N, R, G, B)",
                         font=("", 8))
         h1.grid(row=2, column=1, sticky="w", padx=(8, 0))
         self._dim_labels.append(h1)
 
-        # Ausgabebänder
-        lbl2 = ttk.Label(sec, text="Ausgabebänder (Quellindizes):", font=("Segoe UI", 9, "bold"))
+        # Ausgabebaender
+        lbl2 = ttk.Label(sec, text="Ausgabebaender (Quellindizes):", font=("Segoe UI", 9, "bold"))
         lbl2.grid(row=3, column=0, sticky="w", pady=(8, 3))
         self._bands_var = tk.StringVar(value="1, 2, 3")
         entry = ttk.Entry(sec, textvariable=self._bands_var, width=20)
@@ -417,7 +418,7 @@ class BandKonverterApp(tk.Tk):
             values=["DEFLATE", "LZW", "ZSTD", "NONE"], state="readonly", width=10))
 
         self._blocksize_var = tk.StringVar(value="256")
-        _row(0, 1, "Kachelgrösse:", lambda: ttk.Combobox(
+        _row(0, 1, "Kachelgroesse:", lambda: ttk.Combobox(
             sec, textvariable=self._blocksize_var,
             values=["256", "512", "1024"], state="readonly", width=8))
 
@@ -442,13 +443,13 @@ class BandKonverterApp(tk.Tk):
         self._nodata_status_lbl = ttk.Label(nd_row, text="", font=("Segoe UI", 8, "italic"))
         self._nodata_status_lbl.pack(side="left", padx=(8, 0))
         nd_hint = ttk.Label(sec,
-            text='Leer = kein NoData  |  wird beim Öffnen der Quelldatei automatisch erkannt',
+            text='Leer = kein NoData  |  wird beim Oeffnen der Quelldatei automatisch erkannt',
             font=("", 8))
         nd_hint.grid(row=3, column=0, columnspan=4, sticky="w")
         self._dim_labels.append(nd_hint)
 
         hint = ttk.Label(sec,
-            text="DEFLATE + Predictor=2 = verlustfreie Kompression  |  ZSTD schneller bei ähnlicher Kompressionsrate",
+            text="DEFLATE + Predictor=2 = verlustfreie Kompression  |  ZSTD schneller bei aehnlicher Kompressionsrate",
             font=("", 8))
         hint.grid(row=4, column=0, columnspan=4, sticky="w", pady=(2, 0))
         self._dim_labels.append(hint)
@@ -481,7 +482,7 @@ class BandKonverterApp(tk.Tk):
 
     def _browse_input(self):
         path = filedialog.askopenfilename(
-            title="Input-TIFF auswählen",
+            title="Input-TIFF auswaehlen",
             filetypes=[("GeoTIFF", "*.tif *.tiff"), ("Alle Dateien", "*.*")],
         )
         if path:
@@ -519,7 +520,7 @@ class BandKonverterApp(tk.Tk):
         if not os.path.isdir(init_dir):
             init_dir = "C:\\"
         path = filedialog.askopenfilename(
-            title="OSGeo4W Python auswählen",
+            title="OSGeo4W Python auswaehlen",
             initialdir=init_dir,
             filetypes=[("Python", "python*.exe"), ("Executable", "*.exe"), ("Alle", "*.*")],
         )
@@ -573,7 +574,7 @@ class BandKonverterApp(tk.Tk):
                     try:
                         from tkinter import messagebox
                         messagebox.showerror("Input-Fehler: falsche Bandanzahl",
-                                             "Input-Datei enthält {} Band(ä) — erwartet werden 4 Bänder.".format(bc),
+                                             "Input-Datei enthaelt {} Band(ae) — erwartet werden 4 Baender.".format(bc),
                                              parent=self)
                     except Exception:
                         pass
@@ -605,12 +606,12 @@ class BandKonverterApp(tk.Tk):
                 elif alpha_bands:
                     try:
                         self._nodata_var.set("0")
-                        self._nodata_status_lbl.config(text="⚠ Background Pixel → 0 (default 0 0 0): Prüfen welche Background-Pixel das Input-COG enthält", foreground=T["hint"])
+                        self._nodata_status_lbl.config(text="⚠ Background Pixel → 0 (default 0 0 0): Pruefen welche Background-Pixel das Input-COG enthaelt", foreground=T["hint"])
                     except Exception:
                         pass
                 else:
                     try:
-                        self._nodata_status_lbl.config(text="nicht in Datei gesetzt – bitte manuell prüfen", foreground=T["fg_dim"])
+                        self._nodata_status_lbl.config(text="nicht in Datei gesetzt – bitte manuell pruefen", foreground=T["fg_dim"])
                     except Exception:
                         pass
 
@@ -795,6 +796,39 @@ class BandKonverterApp(tk.Tk):
         else:
             self._log("\n✘  Konvertierung fehlgeschlagen.\n")
 
+    def _update_progress(self, fraction: float):
+        """Update progressbar and ETA label. fraction in [0.0 .. 1.0]."""
+        try:
+            if not hasattr(self, "_progress_start_time"):
+                self._progress_start_time = time.time()
+                self._progress_last_val = 0.0
+                # switch to determinate mode
+                try:
+                    self._progress_bar.stop()
+                    self._progress_bar.config(mode="determinate", maximum=100)
+                except Exception:
+                    pass
+            pct = max(0.0, min(1.0, fraction))
+            try:
+                self._progress_bar['value'] = pct * 100.0
+            except Exception:
+                pass
+            now = time.time()
+            elapsed = now - getattr(self, "_progress_start_time", now)
+            eta_str = "--:--"
+            if pct > 0:
+                remaining = elapsed * (1.0 - pct) / pct
+                m = int(remaining // 60)
+                s = int(remaining % 60)
+                eta_str = f"{m:d}m {s:02d}s"
+            try:
+                self._progress_lbl.config(text=f"{pct*100:5.1f}% — verbleibend: {eta_str}")
+            except Exception:
+                pass
+            self._progress_last_val = pct
+        except Exception:
+            pass
+
     # ── Validierung ───────────────────────────────────────────────────────────
     def _validate(self) -> Tuple[bool, str, List[int], List[str]]:
         errors = []
@@ -804,7 +838,7 @@ class BandKonverterApp(tk.Tk):
         if not self._osgeo_python or not os.path.isfile(self._osgeo_python):
             errors.append(
                 "OSGeo4W Python nicht gefunden.\n"
-                "Bitte Pfad via 'Ändern…' festlegen  (z.B. C:\\OSGeo4W\\bin\\python3.exe)."
+                "Bitte Pfad via 'Aendern…' festlegen  (z.B. C:\\OSGeo4W\\bin\\python3.exe)."
             )
 
         if not inp:
@@ -819,7 +853,7 @@ class BandKonverterApp(tk.Tk):
             labels = [s.strip() for s in self._labels_var.get().split(",") if s.strip()]
         except Exception:
             labels = []
-            errors.append("Input-Bandbeschriftungen ungültig.")
+            errors.append("Input-Bandbeschriftungen ungueltig.")
 
         try:
             bands = [int(s.strip()) for s in self._bands_var.get().split(",")
@@ -828,7 +862,7 @@ class BandKonverterApp(tk.Tk):
                 raise ValueError
         except Exception:
             bands = []
-            errors.append("Ausgabebänder ungültig  (kommagetrennte Ganzzahlen erwartet, z.B.  1, 2, 3).")
+            errors.append("Ausgabebaender ungueltig  (kommagetrennte Ganzzahlen erwartet, z.B.  1, 2, 3).")
 
         if errors:
             from tkinter import messagebox
@@ -905,6 +939,8 @@ class BandKonverterApp(tk.Tk):
         try:
             env = os.environ.copy()
             env["PYTHONHOME"] = _detect_python_home(self._osgeo_python)
+            # Ensure subprocess prints UTF-8 so Windows cp1252 won't raise on special chars
+            env["PYTHONIOENCODING"] = "utf-8"
             header = f"[Subprocess] {self._osgeo_python}\n\n"
             self._log_q.put(header)
             proc = subprocess.Popen(
@@ -919,8 +955,21 @@ class BandKonverterApp(tk.Tk):
             with open(log_path, "w", encoding="utf-8") as lf:
                 lf.write(header)
                 for line in proc.stdout:
-                    self._log_q.put(line)
-                    lf.write(line)
+                    stripped = line.strip()
+                    if stripped.startswith("PROGRESS:"):
+                        # runner emits PROGRESS:0.123456
+                        try:
+                            val = float(stripped.split(":", 1)[1])
+                        except Exception:
+                            val = None
+                        if val is not None:
+                            self.after(0, self._update_progress, float(val))
+                        # still write log and show line
+                        self._log_q.put(line)
+                        lf.write(line)
+                    else:
+                        self._log_q.put(line)
+                        lf.write(line)
             proc.wait()
             self._log_q.put(f"\nLog gespeichert: {log_path}\n")
             if proc.returncode != 0:
