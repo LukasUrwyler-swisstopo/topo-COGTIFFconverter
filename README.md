@@ -2,7 +2,7 @@
 
 Konvertiert Cloud-Optimized GeoTIFFs (COG) mit beliebiger Bandanzahl in ein neues 3-Band-COG mit frei konfigurierbarem Band-Mapping.
 
-Typische Anwendungsfälle mit swisstopo-Luftbildern (DOP):
+Typische Anwendungsfälle bei swisstopo Orthophotos (DOP):
 
 | Quelle | Ausgabe | Bandauswahl |
 |--------|---------|-------------|
