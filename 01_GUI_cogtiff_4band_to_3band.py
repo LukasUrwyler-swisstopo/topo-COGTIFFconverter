@@ -234,8 +234,8 @@ class BandKonverterApp(tk.Tk):
 
         tab_mosaic = ttk.Frame(self._notebook)
         tab_bands  = ttk.Frame(self._notebook)
-        self._notebook.add(tab_mosaic, text="COGTIFF erstellen")
-        self._notebook.add(tab_bands,  text="Baender aendern")
+        self._notebook.add(tab_mosaic, text="create COGTIFF")
+        self._notebook.add(tab_bands,  text="change BANDS")
 
         self._build_mosaic_tab(tab_mosaic)
         self._build_bands_tab(tab_bands)
@@ -359,7 +359,7 @@ class BandKonverterApp(tk.Tk):
                                  values=["8bit", "16bit"], state="readonly", width=8)
         bd_combo.grid(row=0, column=1, sticky="w", padx=(8, 0), pady=3)
 
-        nd_lbl = ttk.Label(sec, text="NoData-Wert:", font=("Segoe UI", 9, "bold"))
+        nd_lbl = ttk.Label(sec, text="NoData-Wert (Input):", font=("Segoe UI", 9, "bold"))
         nd_lbl.grid(row=1, column=0, sticky="w", pady=(6, 3))
         self._mosaic_nodata_var   = tk.StringVar()
         self._mosaic_nodata_combo = ttk.Combobox(sec, textvariable=self._mosaic_nodata_var,
@@ -488,7 +488,7 @@ class BandKonverterApp(tk.Tk):
         sec.columnconfigure(1, weight=1)
 
         fields = [
-            ("Baender:",           "_info_bands"),
+            ("BANDS:",           "_info_bands"),
             ("ColorInterp:",      "_info_colorinterp"),
             ("Aufloesung:",        "_info_res"),
             ("Datentyp:",         "_info_dtype"),
@@ -606,10 +606,10 @@ class BandKonverterApp(tk.Tk):
             sec, textvariable=self._overviews_var,
             values=["AUTO", "NONE"], state="readonly", width=10))
 
-        self._resampling_var = tk.StringVar(value="LANCZOS")
+        self._resampling_var = tk.StringVar(value="AVERAGE")
         _row(2, 0, "Ov.-Resampling:", lambda: ttk.Combobox(
             sec, textvariable=self._resampling_var,
-            values=["LANCZOS", "BILINEAR", "CUBIC", "AVERAGE", "NEAREST"],
+            values=["AVERAGE", "LANCZOS", "BILINEAR", "CUBIC", "NEAREST"],
             state="readonly", width=10))
 
         # NoData
@@ -905,6 +905,15 @@ class BandKonverterApp(tk.Tk):
         s.configure("TProgressbar",
             background=T["accent"], troughcolor=T["root"],
             bordercolor=T["sep"])
+        s.configure("TNotebook",
+            background=T["root"], bordercolor=T["sep"])
+        s.configure("TNotebook.Tab",
+            background=T["btn"], foreground=T["fg"],
+            bordercolor=T["sep"], padding=(10, 4))
+        s.map("TNotebook.Tab",
+            background=[("selected", T["panel"]), ("active", T["btn_hover"])],
+            foreground=[("selected", T["accent"])],
+            padding=[("selected", (16, 8))])
 
         self.option_add("*TCombobox*Listbox.background",       T["list"])
         self.option_add("*TCombobox*Listbox.foreground",       T["fg"])
