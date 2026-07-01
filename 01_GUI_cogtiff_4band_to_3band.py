@@ -400,7 +400,7 @@ class BandKonverterApp(tk.Tk):
             values=["JPEG", "DEFLATE", "LZW", "ZSTD", "NONE"], state="readonly", width=10))
 
         self._mosaic_quality_var = tk.StringVar(value="95")
-        self._mosaic_quality_spin = _row(0, 1, "JPEG-Qualitaet:", lambda: ttk.Spinbox(
+        self._mosaic_quality_spin = _row(0, 1, "JPEG-Qualitaet:", lambda: tk.Spinbox(
             sec, from_=60, to=100, textvariable=self._mosaic_quality_var, width=6))
 
         self._mosaic_blocksize_var = tk.StringVar(value="256")
@@ -593,7 +593,7 @@ class BandKonverterApp(tk.Tk):
             values=["DEFLATE", "LZW", "ZSTD", "JPEG", "NONE"], state="readonly", width=10))
 
         self._quality_var  = tk.StringVar(value="90")
-        self._quality_spin = _row(0, 1, "JPEG-Qualitaet:", lambda: ttk.Spinbox(
+        self._quality_spin = _row(0, 1, "JPEG-Qualitaet:", lambda: tk.Spinbox(
             sec, from_=60, to=100, textvariable=self._quality_var, width=6))
 
         self._blocksize_var = tk.StringVar(value="256")

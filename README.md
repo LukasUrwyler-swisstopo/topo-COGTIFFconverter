@@ -36,7 +36,7 @@ Typische Anwendungsfälle mit swisstopo-Luftbildern (DOP) fuer die Band-Konverti
 
 ## Voraussetzungen
 
-- **GUI:** Python 3.x (Standard-Installation, nur `tkinter` benötigt)
+- **GUI:** Python >= 3.6 (Standard-Installation, nur `tkinter` benötigt). Bewusst kompatibel mit 3.6 gehalten (z.B. `tk.Spinbox` statt `ttk.Spinbox`, das erst ab 3.7 existiert) — Firmen-Standard-Python ist 3.6.
 - **GDAL-Verarbeitung:** [OSGeo4W](https://trac.osgeo.org/osgeo4w/) oder QGIS-Installation mit `python3.exe` und `osgeo`-Paket
   - Standardpfad: `C:\OSGeo4W\bin\python3.exe`
   - GDAL >= 3.1 (COG-Driver erforderlich)
