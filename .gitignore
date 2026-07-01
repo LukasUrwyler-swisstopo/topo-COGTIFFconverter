@@ -9,3 +9,7 @@ __pycache__/
 # Logs
 logs/
 *.log
+
+.pytest_cache/
+tests/
+tests/__pycache__/
