@@ -37,3 +37,21 @@ def test_app_class_exists():
         os.path.join(os.path.dirname(__file__), "01_GUI_cogtiff_4band_to_3band.py"),
     )
     assert callable(gui_mod.BandKonverterApp)
+
+
+def test_nodata_presets_for_mosaic_tab():
+    gui_mod = load_module_from_path(
+        "gui_module",
+        os.path.join(os.path.dirname(__file__), "01_GUI_cogtiff_4band_to_3band.py"),
+    )
+    assert set(gui_mod.NODATA_OPTIONS.keys()) == {"8bit", "16bit"}
+    assert "0 0 0" in gui_mod.NODATA_OPTIONS["8bit"]
+    assert "0 0 0 0" in gui_mod.NODATA_OPTIONS["16bit"]
+
+
+def test_mosaic_action_available():
+    runner_mod = load_module_from_path(
+        "runner_module",
+        os.path.join(os.path.dirname(__file__), "_osgeo_runner.py"),
+    )
+    assert callable(runner_mod._mosaic)
