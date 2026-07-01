@@ -6,10 +6,12 @@ Ausgabe geht auf stdout -> wird vom GUI live im Log angezeigt.
 Aktionen:
     info    - Metadaten aus Quelldatei lesen, Ergebnis als JSON auf stdout
     convert - COGTIFF Band-Konvertierung durchfuehren, Fortschritt auf stdout
+    mosaic  - Kachel-TIFFs (+ .tfw) zu VRT mosaikieren und als COGTIFF schreiben
 """
 
 import sys
 import os
+import glob
 import json
 import traceback
 import time
@@ -73,6 +75,7 @@ def _convert(cfg: dict) -> None:
     overviews           = cfg.get("overviews",           "AUTO")
     overview_resampling = cfg.get("overview_resampling", "LANCZOS")
     nodata              = cfg.get("nodata",              "")
+    quality             = cfg.get("quality",              "90")
 
     def _log(msg: str) -> None:
         print(msg, flush=True)
@@ -123,15 +126,18 @@ def _convert(cfg: dict) -> None:
     nodata_val  = float(nodata) if str(nodata).strip() else None
     cog_options = [
         f"COMPRESS={compress}",
-        "PREDICTOR=2",
         f"BLOCKSIZE={blocksize}",
         f"OVERVIEWS={overviews}",
         f"OVERVIEW_RESAMPLING={overview_resampling}",
         "BIGTIFF=IF_SAFER",
     ]
+    if compress.upper() == "JPEG":
+        cog_options += [f"QUALITY={quality}", f"OVERVIEW_QUALITY={quality}"]
+    else:
+        cog_options.append("PREDICTOR=2")
 
     _log(f"\nSchreibe COGTIFF: {output_path}")
-    _log(f"  Kompression   : {compress}, Kachelgroesse: {blocksize}")
+    _log(f"  Kompression   : {compress}" + (f" (QUALITY={quality})" if compress.upper() == "JPEG" else "") + f", Kachelgroesse: {blocksize}")
     _log(f"  Overviews     : {overviews}  ({overview_resampling})")
     _log(f"  NoData        : {nodata_val if nodata_val is not None else '(nicht gesetzt)'}")
 
@@ -185,6 +191,128 @@ def _convert(cfg: dict) -> None:
     _log("Fertig.")
 
 
+def _mosaic(cfg: dict) -> None:
+    """Mosaikiert Kachel-TIFFs (VRT) und schreibt das Ergebnis als COGTIFF. Fortschritt auf stdout."""
+    from osgeo import gdal
+
+    input_dir           = cfg["input_dir"]
+    output_dir          = cfg["output_dir"]
+    output_name         = cfg["output_name"]
+    compress            = cfg.get("compress",            "JPEG")
+    quality             = cfg.get("quality",             "90")
+    blocksize           = cfg.get("blocksize",           "256")
+    overviews           = cfg.get("overviews",           "AUTO")
+    overview_resampling = cfg.get("overview_resampling", "AVERAGE")
+    nodata              = cfg.get("nodata",              "").strip()
+
+    def _log(msg: str) -> None:
+        print(msg, flush=True)
+
+    gdal.UseExceptions()
+
+    tiles = sorted(
+        {p for pat in ("*.tif", "*.tiff") for p in glob.glob(os.path.join(input_dir, pat))}
+    )
+    if not tiles:
+        raise FileNotFoundError(f"Keine .tif/.tiff Kacheln gefunden in: {input_dir}")
+
+    _log(f"Gefundene Kacheln : {len(tiles)}")
+    _log(f"Quellordner       : {input_dir}")
+
+    vrt_dir = Path(output_dir) / "vrt"
+    vrt_dir.mkdir(parents=True, exist_ok=True)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    vrt_path = vrt_dir / f"{output_name}.vrt"
+    out_path = Path(output_dir) / f"{output_name}.tif"
+
+    _log(f"\nErstelle VRT-Mosaik: {vrt_path}")
+    if nodata:
+        _log(f"  NoData (VRT) : {nodata}")
+    vrt_options = gdal.BuildVRTOptions(
+        srcNodata=nodata or None,
+        VRTNodata=nodata or None,
+    )
+    vrt_ds = gdal.BuildVRT(str(vrt_path), tiles, options=vrt_options)
+    if vrt_ds is None:
+        raise RuntimeError("gdal.BuildVRT hat None zurueckgegeben - VRT-Erstellung fehlgeschlagen.")
+    vrt_ds.FlushCache()
+    vrt_ds = None
+
+    cog_options = [
+        f"COMPRESS={compress}",
+        f"BLOCKSIZE={blocksize}",
+        f"OVERVIEWS={overviews}",
+        f"OVERVIEW_RESAMPLING={overview_resampling}",
+        "NUM_THREADS=ALL_CPUS",
+        "BIGTIFF=YES",
+    ]
+    if compress.upper() == "JPEG":
+        cog_options += [f"QUALITY={quality}", f"OVERVIEW_QUALITY={quality}"]
+    else:
+        cog_options.append("PREDICTOR=2")
+
+    a_nodata   = nodata.split()[0] if nodata else None
+    nodata_val = float(a_nodata) if a_nodata is not None else None
+
+    _log(f"\nSchreibe COGTIFF: {out_path}")
+    _log(f"  Kompression   : {compress}" + (f" (QUALITY={quality})" if compress.upper() == "JPEG" else ""))
+    _log(f"  Kachelgroesse : {blocksize}")
+    _log(f"  Overviews     : {overviews}  ({overview_resampling})")
+    _log(f"  NoData        : {nodata_val if nodata_val is not None else '(nicht gesetzt)'}")
+    _log("  Koordinatensys: EPSG:2056")
+
+    translate_options = gdal.TranslateOptions(
+        format="COG",
+        outputSRS="EPSG:2056",
+        noData=nodata_val,
+        creationOptions=cog_options,
+    )
+
+    last_emit = {"t": 0.0, "p": -1.0}
+
+    def _progress(complete, message, unknown=None):
+        try:
+            if complete is None:
+                return 1
+            pct = float(complete)
+            now = time.time()
+            if (now - last_emit["t"]) >= 1.0 or (pct - last_emit["p"]) >= 0.005:
+                print(f"PROGRESS:{pct:.6f}", flush=True)
+                last_emit["t"] = now
+                last_emit["p"] = pct
+        except Exception:
+            pass
+        return 1
+
+    src_ds = gdal.Open(str(vrt_path), gdal.GA_ReadOnly)
+    if src_ds is None:
+        raise RuntimeError(f"GDAL konnte das VRT nicht oeffnen: {vrt_path}")
+
+    out_ds = gdal.Translate(str(out_path), src_ds, options=translate_options, callback=_progress)
+    if out_ds is None:
+        raise RuntimeError("gdal.Translate hat None zurueckgegeben - Ausgabe fehlgeschlagen.")
+
+    out_ds.FlushCache()
+    out_ds = None
+    src_ds = None
+
+    verify_ds = gdal.Open(str(out_path), gdal.GA_ReadOnly)
+    if verify_ds is None:
+        raise RuntimeError(f"Ausgabedatei konnte nicht geoeffnet werden: {out_path}")
+
+    _log("\nVerifikation:")
+    _log(f"  Baender        : {verify_ds.RasterCount}")
+    _log(f"  Aufloesung     : {verify_ds.RasterXSize} x {verify_ds.RasterYSize} px")
+    _log(f"  Datentyp      : {gdal.GetDataTypeName(verify_ds.GetRasterBand(1).DataType)}")
+
+    size_out = Path(out_path).stat().st_size / (1024 ** 2)
+    _log(f"  Dateigroesse   : {size_out:.1f} MB")
+
+    verify_ds = None
+    _log("Fertig.")
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print("[FEHLER] Kein Konfigurationspfad uebergeben.", flush=True)
@@ -200,6 +328,8 @@ def main() -> None:
             _info(cfg)
         elif action == "convert":
             _convert(cfg)
+        elif action == "mosaic":
+            _mosaic(cfg)
         else:
             print(f"[FEHLER] Unbekannte Aktion: '{action}'", flush=True)
             sys.exit(1)

@@ -1,6 +1,8 @@
 """
-01_GUI_cogtiff_4band_to_3band.py  –  COGTIFF Band-Konverter GUI
-Tkinter-Oberflaeche fuer den flexiblen Band-Konverter (RGBN → RGB / NRG usw.).
+01_GUI_cogtiff_4band_to_3band.py  –  COGTIFF Werkzeuge GUI
+Tkinter-Oberflaeche mit zwei Tabs:
+  - "COGTIFF erstellen"  : Kachel-TIFFs (+.tfw) zu VRT mosaikieren und als COGTIFF schreiben
+  - "Baender aendern"    : flexibler Band-Konverter (RGBN → RGB / NRG usw.)
 Styling analog zu 0_main_GDWH_import_GUI.py.
 
 Das GUI laeuft mit Standard-Python (kein osgeo erforderlich).
@@ -148,6 +150,12 @@ PRESETS = [
     ("NRGB → NRG",  ["N", "R", "G", "B"], [1, 2, 3]),
 ]
 
+# ─── NoData-Presets fuer die Mosaik-Erstellung (abhaengig von Bit-Tiefe) ──────
+NODATA_OPTIONS = {
+    "8bit":  ["(kein NoData)", "0 0 0", "255 255 255"],
+    "16bit": ["(kein NoData)", "0 0 0 0", "65535 65535 65535"],
+}
+
 # ─── Log-Queue Writer ──────────────────────────────────────────────────────────
 class _QueueWriter:
     def __init__(self, q: queue.Queue):
@@ -166,7 +174,7 @@ class BandKonverterApp(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("COGTIFF Band-Konverter")
+        self.title("COGTIFF Werkzeuge")
         screen_h = self.winfo_screenheight()
         win_h    = min(880, screen_h - 80)
         self.geometry(f"820x{win_h}")
@@ -195,7 +203,7 @@ class BandKonverterApp(tk.Tk):
         self._hdr = tk.Frame(self, height=52)
         self._hdr.pack(fill="x")
         self._hdr.pack_propagate(False)
-        self._hdr_lbl = tk.Label(self._hdr, text="COGTIFF Band-Konverter",
+        self._hdr_lbl = tk.Label(self._hdr, text="COGTIFF Werkzeuge",
                                   font=("Segoe UI", 15, "bold"))
         self._hdr_lbl.pack(side="left", padx=16, pady=12)
         self._theme_btn = tk.Button(self._hdr, text="Dark",
@@ -220,28 +228,17 @@ class BandKonverterApp(tk.Tk):
         ttk.Button(self._osgeo_frame, text="Aendern…",
                     command=self._set_osgeo_python).pack(side="right")
 
-        # Scrollbarer Formular-Bereich
-        outer = ttk.Frame(self)
-        outer.pack(fill="both", expand=True, padx=12, pady=6)
-        self._canvas = tk.Canvas(outer, highlightthickness=0)
-        vsb = ttk.Scrollbar(outer, orient="vertical", command=self._canvas.yview)
-        self._canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side="right", fill="y")
-        self._canvas.pack(side="left", fill="both", expand=True)
-        self._sf  = ttk.Frame(self._canvas)
-        win_id    = self._canvas.create_window((0, 0), window=self._sf, anchor="nw")
-        self._sf.bind("<Configure>",
-                      lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")))
-        self._canvas.bind("<Configure>",
-                          lambda e: self._canvas.itemconfig(win_id, width=e.width))
-        self._canvas.bind_all("<MouseWheel>",
-                              lambda e: self._canvas.yview_scroll(-1*(e.delta//120), "units"))
-        self.bind_class("TCombobox", "<MouseWheel>", self._fwd_wheel)
+        # Tabs
+        self._notebook = ttk.Notebook(self)
+        self._notebook.pack(fill="both", expand=True, padx=12, pady=6)
 
-        self._build_dateien(self._sf)
-        self._build_dateiinfo(self._sf)
-        self._build_bandconfig(self._sf)
-        self._build_cog_optionen(self._sf)
+        tab_mosaic = ttk.Frame(self._notebook)
+        tab_bands  = ttk.Frame(self._notebook)
+        self._notebook.add(tab_mosaic, text="COGTIFF erstellen")
+        self._notebook.add(tab_bands,  text="Baender aendern")
+
+        self._build_mosaic_tab(tab_mosaic)
+        self._build_bands_tab(tab_bands)
 
         # Log
         ttk.Separator(self).pack(fill="x", padx=12, pady=4)
@@ -253,22 +250,200 @@ class BandKonverterApp(tk.Tk):
             font=("Courier New", 9))
         self._log_box.pack(fill="both", expand=True)
 
-        # Fortschrittsbalken (versteckt bis Import laeuft)
+        # Fortschrittsbalken (versteckt bis Verarbeitung laeuft)
         self._progress_frame = ttk.Frame(self)
         self._progress_bar   = ttk.Progressbar(self._progress_frame, mode="indeterminate")
         self._progress_bar.pack(side="left", fill="x", expand=True, padx=(0, 8))
         self._progress_lbl = ttk.Label(self._progress_frame,
-                                        text="Konvertierung laeuft…", font=("", 9))
+                                        text="Verarbeitung laeuft…", font=("", 9))
         self._progress_lbl.pack(side="left")
 
         # Buttons
         self._btn_row = ttk.Frame(self)
         self._btn_row.pack(fill="x", padx=12, pady=(0, 10))
-        self._start_btn = ttk.Button(self._btn_row, text="▶   KONVERTIEREN",
+        ttk.Button(self._btn_row, text="Log loeschen",
+                    command=self._clear_log).pack(side="right")
+
+    def _build_bands_tab(self, parent):
+        # Scrollbarer Formular-Bereich
+        outer = ttk.Frame(parent)
+        outer.pack(fill="both", expand=True)
+        self._canvas = tk.Canvas(outer, highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        self._canvas.pack(side="left", fill="both", expand=True)
+        self._sf  = ttk.Frame(self._canvas)
+        win_id    = self._canvas.create_window((0, 0), window=self._sf, anchor="nw")
+        self._sf.bind("<Configure>",
+                      lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")))
+        self._canvas.bind("<Configure>",
+                          lambda e: self._canvas.itemconfig(win_id, width=e.width))
+        self._canvas.bind("<MouseWheel>",
+                          lambda e: self._canvas.yview_scroll(-1*(e.delta//120), "units"))
+        self.bind_class("TCombobox", "<MouseWheel>", self._fwd_wheel)
+
+        self._build_dateien(self._sf)
+        self._build_dateiinfo(self._sf)
+        self._build_bandconfig(self._sf)
+        self._build_cog_optionen(self._sf)
+
+        btn_row = ttk.Frame(parent)
+        btn_row.pack(fill="x", pady=(6, 0))
+        self._start_btn = ttk.Button(btn_row, text="▶   KONVERTIEREN",
                                       command=self._start)
         self._start_btn.pack(side="right", ipadx=22, ipady=7)
-        ttk.Button(self._btn_row, text="Log loeschen",
-                    command=self._clear_log).pack(side="right", padx=(0, 10))
+
+    def _build_mosaic_tab(self, parent):
+        self._build_mosaic_dateien(parent)
+        self._build_mosaic_nodata(parent)
+        self._build_mosaic_cog_optionen(parent)
+
+        btn_row = ttk.Frame(parent)
+        btn_row.pack(fill="x", pady=(6, 0))
+        self._start_mosaic_btn = ttk.Button(btn_row, text="▶   COGTIFF ERSTELLEN",
+                                             command=self._start_mosaic)
+        self._start_mosaic_btn.pack(side="right", ipadx=22, ipady=7)
+
+    def _build_mosaic_dateien(self, parent):
+        sec = ttk.LabelFrame(parent, text="Dateien", padding=10,
+                              style="Section.TLabelframe")
+        sec.pack(fill="x", pady=(0, 6))
+        sec.columnconfigure(1, weight=1)
+
+        lbl = ttk.Label(sec, text="Input-Ordner (Kacheln):", font=("Segoe UI", 9, "bold"))
+        lbl.grid(row=0, column=0, sticky="w", pady=3)
+        self._mosaic_in_var = tk.StringVar()
+        ttk.Entry(sec, textvariable=self._mosaic_in_var
+                   ).grid(row=0, column=1, sticky="ew", padx=(8, 4), pady=3)
+        ttk.Button(sec, text="Ordner…",
+                    command=self._browse_mosaic_input
+                    ).grid(row=0, column=2, pady=3)
+        in_hint = ttk.Label(sec, text="Ordner mit gekachelten .tif/.tfw-Dateien (z.B. 1km²-Kacheln)",
+                             font=("", 8))
+        in_hint.grid(row=1, column=1, sticky="w", padx=(8, 0))
+        self._dim_labels.append(in_hint)
+
+        lbl2 = ttk.Label(sec, text="Output-Ordner:", font=("Segoe UI", 9, "bold"))
+        lbl2.grid(row=2, column=0, sticky="w", pady=(8, 3))
+        self._mosaic_out_var = tk.StringVar()
+        ttk.Entry(sec, textvariable=self._mosaic_out_var
+                   ).grid(row=2, column=1, sticky="ew", padx=(8, 4), pady=(8, 3))
+        ttk.Button(sec, text="Ordner…",
+                    command=self._browse_mosaic_output
+                    ).grid(row=2, column=2, pady=(8, 3))
+        out_hint = ttk.Label(sec, text="VRT-Zwischendatei wird im Unterordner 'vrt' abgelegt, COGTIFF direkt hier",
+                              font=("", 8))
+        out_hint.grid(row=3, column=1, sticky="w", padx=(8, 0))
+        self._dim_labels.append(out_hint)
+
+        lbl3 = ttk.Label(sec, text="Ausgabedateiname:", font=("Segoe UI", 9, "bold"))
+        lbl3.grid(row=4, column=0, sticky="w", pady=(8, 3))
+        self._mosaic_name_var = tk.StringVar()
+        ttk.Entry(sec, textvariable=self._mosaic_name_var
+                   ).grid(row=4, column=1, sticky="ew", padx=(8, 4), pady=(8, 3))
+        name_hint = ttk.Label(sec, text="Ohne Dateiendung, z.B. SB_2023_RM_DOPmosaic_10cm_LV95",
+                               font=("", 8))
+        name_hint.grid(row=5, column=1, sticky="w", padx=(8, 0))
+        self._dim_labels.append(name_hint)
+
+    def _build_mosaic_nodata(self, parent):
+        sec = ttk.LabelFrame(parent, text="Bit-Tiefe & NoData", padding=10,
+                              style="Section.TLabelframe")
+        sec.pack(fill="x", pady=(0, 6))
+
+        bd_lbl = ttk.Label(sec, text="Bit-Tiefe (Input):", font=("Segoe UI", 9, "bold"))
+        bd_lbl.grid(row=0, column=0, sticky="w", pady=3)
+        self._mosaic_bitdepth_var = tk.StringVar(value="8bit")
+        bd_combo = ttk.Combobox(sec, textvariable=self._mosaic_bitdepth_var,
+                                 values=["8bit", "16bit"], state="readonly", width=8)
+        bd_combo.grid(row=0, column=1, sticky="w", padx=(8, 0), pady=3)
+
+        nd_lbl = ttk.Label(sec, text="NoData-Wert:", font=("Segoe UI", 9, "bold"))
+        nd_lbl.grid(row=1, column=0, sticky="w", pady=(6, 3))
+        self._mosaic_nodata_var   = tk.StringVar()
+        self._mosaic_nodata_combo = ttk.Combobox(sec, textvariable=self._mosaic_nodata_var,
+                                                  state="readonly", width=22)
+        self._mosaic_nodata_combo.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(6, 3))
+
+        hint = ttk.Label(sec,
+            text="Gilt fuer -srcnodata / -vrtnodata / -a_nodata  |  Hintergrundfarbe der Kacheln pruefen",
+            font=("", 8))
+        hint.grid(row=2, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        self._dim_labels.append(hint)
+
+        bd_combo.bind("<<ComboboxSelected>>", lambda _: self._update_mosaic_nodata_options())
+        self._update_mosaic_nodata_options()
+
+    def _update_mosaic_nodata_options(self):
+        opts = NODATA_OPTIONS.get(self._mosaic_bitdepth_var.get(), ["(kein NoData)"])
+        self._mosaic_nodata_combo.config(values=opts)
+        self._mosaic_nodata_var.set(opts[1] if len(opts) > 1 else opts[0])
+
+    def _build_mosaic_cog_optionen(self, parent):
+        sec = ttk.LabelFrame(parent, text="COG-Optionen", padding=10,
+                              style="Section.TLabelframe")
+        sec.pack(fill="x", pady=(0, 6))
+        sec.columnconfigure(1, weight=0)
+        sec.columnconfigure(3, weight=0)
+
+        def _row(r, c, label, widget_cb):
+            lbl = ttk.Label(sec, text=label, font=("Segoe UI", 9, "bold"))
+            lbl.grid(row=r, column=c*2, sticky="w", pady=3, padx=(0 if c == 0 else 20, 0))
+            w = widget_cb()
+            w.grid(row=r, column=c*2+1, sticky="w", padx=(6, 0), pady=3)
+            return w
+
+        self._mosaic_compress_var = tk.StringVar(value="JPEG")
+        _row(0, 0, "Kompression:", lambda: ttk.Combobox(
+            sec, textvariable=self._mosaic_compress_var,
+            values=["JPEG", "DEFLATE", "LZW", "ZSTD", "NONE"], state="readonly", width=10))
+
+        self._mosaic_quality_var = tk.StringVar(value="95")
+        self._mosaic_quality_spin = _row(0, 1, "JPEG-Qualitaet:", lambda: ttk.Spinbox(
+            sec, from_=60, to=100, textvariable=self._mosaic_quality_var, width=6))
+
+        self._mosaic_blocksize_var = tk.StringVar(value="256")
+        _row(1, 0, "Kachelgroesse:", lambda: ttk.Combobox(
+            sec, textvariable=self._mosaic_blocksize_var,
+            values=["256", "512", "1024"], state="readonly", width=8))
+
+        self._mosaic_overviews_var = tk.StringVar(value="AUTO")
+        _row(1, 1, "Overviews:", lambda: ttk.Combobox(
+            sec, textvariable=self._mosaic_overviews_var,
+            values=["AUTO", "NONE"], state="readonly", width=10))
+
+        self._mosaic_resampling_var = tk.StringVar(value="AVERAGE")
+        _row(2, 0, "Ov.-Resampling:", lambda: ttk.Combobox(
+            sec, textvariable=self._mosaic_resampling_var,
+            values=["LANCZOS", "BILINEAR", "CUBIC", "AVERAGE", "NEAREST"],
+            state="readonly", width=10))
+
+        hint = ttk.Label(sec,
+            text="JPEG-Qualitaet nur relevant bei Kompression=JPEG (60-100)  |  Koordinatensystem fest EPSG:2056",
+            font=("", 8))
+        hint.grid(row=3, column=0, columnspan=4, sticky="w", pady=(6, 0))
+        self._dim_labels.append(hint)
+
+        self._mosaic_compress_var.trace_add("write", lambda *_: self._update_mosaic_quality_state())
+        self._update_mosaic_quality_state()
+
+    def _update_mosaic_quality_state(self):
+        state = "normal" if self._mosaic_compress_var.get().upper() == "JPEG" else "disabled"
+        try:
+            self._mosaic_quality_spin.config(state=state)
+        except Exception:
+            pass
+
+    def _browse_mosaic_input(self):
+        path = filedialog.askdirectory(title="Input-Ordner (Kacheln) auswaehlen")
+        if path:
+            self._mosaic_in_var.set(path.replace("/", "\\"))
+
+    def _browse_mosaic_output(self):
+        path = filedialog.askdirectory(title="Output-Ordner auswaehlen")
+        if path:
+            self._mosaic_out_var.set(path.replace("/", "\\"))
 
     def _build_dateien(self, parent):
         sec = ttk.LabelFrame(parent, text="Dateien", padding=10,
@@ -415,29 +590,33 @@ class BandKonverterApp(tk.Tk):
         self._compress_var = tk.StringVar(value="DEFLATE")
         _row(0, 0, "Kompression:", lambda: ttk.Combobox(
             sec, textvariable=self._compress_var,
-            values=["DEFLATE", "LZW", "ZSTD", "NONE"], state="readonly", width=10))
+            values=["DEFLATE", "LZW", "ZSTD", "JPEG", "NONE"], state="readonly", width=10))
+
+        self._quality_var  = tk.StringVar(value="90")
+        self._quality_spin = _row(0, 1, "JPEG-Qualitaet:", lambda: ttk.Spinbox(
+            sec, from_=60, to=100, textvariable=self._quality_var, width=6))
 
         self._blocksize_var = tk.StringVar(value="256")
-        _row(0, 1, "Kachelgroesse:", lambda: ttk.Combobox(
+        _row(1, 0, "Kachelgroesse:", lambda: ttk.Combobox(
             sec, textvariable=self._blocksize_var,
             values=["256", "512", "1024"], state="readonly", width=8))
 
         self._overviews_var = tk.StringVar(value="AUTO")
-        _row(1, 0, "Overviews:", lambda: ttk.Combobox(
+        _row(1, 1, "Overviews:", lambda: ttk.Combobox(
             sec, textvariable=self._overviews_var,
             values=["AUTO", "NONE"], state="readonly", width=10))
 
         self._resampling_var = tk.StringVar(value="LANCZOS")
-        _row(1, 1, "Ov.-Resampling:", lambda: ttk.Combobox(
+        _row(2, 0, "Ov.-Resampling:", lambda: ttk.Combobox(
             sec, textvariable=self._resampling_var,
             values=["LANCZOS", "BILINEAR", "CUBIC", "AVERAGE", "NEAREST"],
             state="readonly", width=10))
 
         # NoData
         nd_lbl = ttk.Label(sec, text="NoData-Wert:", font=("Segoe UI", 9, "bold"))
-        nd_lbl.grid(row=2, column=0, sticky="w", pady=(8, 3))
+        nd_lbl.grid(row=3, column=0, sticky="w", pady=(8, 3))
         nd_row = ttk.Frame(sec)
-        nd_row.grid(row=2, column=1, columnspan=3, sticky="w", padx=(6, 0), pady=(8, 3))
+        nd_row.grid(row=3, column=1, columnspan=3, sticky="w", padx=(6, 0), pady=(8, 3))
         self._nodata_var = tk.StringVar(value="")
         ttk.Entry(nd_row, textvariable=self._nodata_var, width=12).pack(side="left")
         self._nodata_status_lbl = ttk.Label(nd_row, text="", font=("Segoe UI", 8, "italic"))
@@ -445,14 +624,24 @@ class BandKonverterApp(tk.Tk):
         nd_hint = ttk.Label(sec,
             text='Leer = kein NoData  |  wird beim Oeffnen der Quelldatei automatisch erkannt',
             font=("", 8))
-        nd_hint.grid(row=3, column=0, columnspan=4, sticky="w")
+        nd_hint.grid(row=4, column=0, columnspan=4, sticky="w")
         self._dim_labels.append(nd_hint)
 
         hint = ttk.Label(sec,
-            text="DEFLATE + Predictor=2 = verlustfreie Kompression  |  ZSTD schneller bei aehnlicher Kompressionsrate",
+            text="DEFLATE + Predictor=2 = verlustfrei  |  JPEG-Qualitaet nur relevant bei Kompression=JPEG (60-100)",
             font=("", 8))
-        hint.grid(row=4, column=0, columnspan=4, sticky="w", pady=(2, 0))
+        hint.grid(row=5, column=0, columnspan=4, sticky="w", pady=(2, 0))
         self._dim_labels.append(hint)
+
+        self._compress_var.trace_add("write", lambda *_: self._update_quality_state())
+        self._update_quality_state()
+
+    def _update_quality_state(self):
+        state = "normal" if self._compress_var.get().upper() == "JPEG" else "disabled"
+        try:
+            self._quality_spin.config(state=state)
+        except Exception:
+            pass
 
     # ── Hilfsfunktionen ────────────────────────────────────────────────────────
     def _fwd_wheel(self, event):
@@ -796,6 +985,16 @@ class BandKonverterApp(tk.Tk):
         else:
             self._log("\n✘  Konvertierung fehlgeschlagen.\n")
 
+    def _on_done_mosaic(self, success: bool):
+        self._running = False
+        self._start_mosaic_btn.config(state="normal")
+        self._progress_bar.stop()
+        self._progress_frame.pack_forget()
+        if success:
+            self._log("\n✔  COGTIFF erfolgreich erstellt.\n")
+        else:
+            self._log("\n✘  COGTIFF-Erstellung fehlgeschlagen.\n")
+
     def _update_progress(self, fraction: float):
         """Update progressbar and ETA label. fraction in [0.0 .. 1.0]."""
         try:
@@ -881,6 +1080,7 @@ class BandKonverterApp(tk.Tk):
 
         out      = self._out_var.get().strip()
         compress = self._compress_var.get()
+        quality  = self._quality_var.get()
         block    = self._blocksize_var.get()
         ovr      = self._overviews_var.get()
         resamp   = self._resampling_var.get()
@@ -895,15 +1095,15 @@ class BandKonverterApp(tk.Tk):
 
         threading.Thread(
             target=self._run_thread,
-            args=(inp, out, bands, labels, compress, block, ovr, resamp, nodata),
+            args=(inp, out, bands, labels, compress, quality, block, ovr, resamp, nodata),
             daemon=True,
         ).start()
 
     def _run_thread(self, inp, out, bands, labels,
-                    compress, block, ovr, resamp, nodata):
+                    compress, quality, block, ovr, resamp, nodata):
         try:
             self._exec_with_osgeo(inp, out, bands, labels,
-                                   compress, block, ovr, resamp, nodata)
+                                   compress, quality, block, ovr, resamp, nodata)
             self.after(0, self._on_done, True)
         except Exception as e:
             self._log_q.put(f"\n[FEHLER] {e}\n")
@@ -911,8 +1111,8 @@ class BandKonverterApp(tk.Tk):
             self.after(0, self._on_done, False)
 
     def _exec_with_osgeo(self, inp, out, bands, labels,
-                          compress, block, ovr, resamp, nodata):
-        """Startet _osgeo_runner.py als Subprocess mit OSGeo4W Python."""
+                          compress, quality, block, ovr, resamp, nodata):
+        """Startet _osgeo_runner.py (Aktion 'convert') als Subprocess mit OSGeo4W Python."""
         cfg = {
             "action":               "convert",
             "input_path":           inp,
@@ -920,17 +1120,107 @@ class BandKonverterApp(tk.Tk):
             "output_bands":         bands,
             "input_band_labels":    labels,
             "compress":             compress,
+            "quality":              quality,
             "blocksize":            block,
             "overviews":            ovr,
             "overview_resampling":  resamp,
             "nodata":               nodata,
         }
+        self._run_osgeo_subprocess(cfg, Path(out).stem)
 
-        # Log-Datei vorbereiten
+    # ── Mosaik-Erstellung: Validierung & Start ────────────────────────────────
+    def _validate_mosaic(self) -> Tuple[bool, str, str, str]:
+        errors = []
+        inp  = self._mosaic_in_var.get().strip()
+        out  = self._mosaic_out_var.get().strip()
+        name = self._mosaic_name_var.get().strip()
+
+        if not self._osgeo_python or not os.path.isfile(self._osgeo_python):
+            errors.append(
+                "OSGeo4W Python nicht gefunden.\n"
+                "Bitte Pfad via 'Aendern…' festlegen  (z.B. C:\\OSGeo4W\\bin\\python3.exe)."
+            )
+
+        if not inp:
+            errors.append("Input-Ordner fehlt.")
+        elif not os.path.isdir(inp):
+            errors.append(f"Input-Ordner nicht gefunden:\n  {inp}")
+
+        if not out:
+            errors.append("Output-Ordner fehlt.")
+
+        if not name:
+            errors.append("Ausgabedateiname fehlt.")
+
+        if errors:
+            from tkinter import messagebox
+            messagebox.showerror("Eingabe-Fehler",
+                                  "\n\n".join(f"• {e}" for e in errors), parent=self)
+            return False, inp, out, name
+        return True, inp, out, name
+
+    def _start_mosaic(self):
+        if self._running:
+            return
+        ok, inp, out, name = self._validate_mosaic()
+        if not ok:
+            return
+
+        compress   = self._mosaic_compress_var.get()
+        quality    = self._mosaic_quality_var.get()
+        block      = self._mosaic_blocksize_var.get()
+        ovr        = self._mosaic_overviews_var.get()
+        resamp     = self._mosaic_resampling_var.get()
+        nodata_raw = self._mosaic_nodata_var.get()
+        nodata     = "" if nodata_raw.startswith("(") else nodata_raw
+
+        self._running = True
+        self._start_mosaic_btn.config(state="disabled")
+        self._progress_frame.pack(fill="x", padx=12, pady=(0, 4), before=self._btn_row)
+        self._progress_bar.start(10)
+        self._clear_log()
+        self._log("=== COGTIFF-Mosaik erstellen gestartet ===\n\n")
+
+        threading.Thread(
+            target=self._run_mosaic_thread,
+            args=(inp, out, name, compress, quality, block, ovr, resamp, nodata),
+            daemon=True,
+        ).start()
+
+    def _run_mosaic_thread(self, inp, out, name,
+                           compress, quality, block, ovr, resamp, nodata):
+        try:
+            self._exec_mosaic_with_osgeo(inp, out, name, compress, quality, block, ovr, resamp, nodata)
+            self.after(0, self._on_done_mosaic, True)
+        except Exception as e:
+            self._log_q.put(f"\n[FEHLER] {e}\n")
+            self._log_q.put(traceback.format_exc())
+            self.after(0, self._on_done_mosaic, False)
+
+    def _exec_mosaic_with_osgeo(self, inp, out, name,
+                                 compress, quality, block, ovr, resamp, nodata):
+        """Startet _osgeo_runner.py (Aktion 'mosaic') als Subprocess mit OSGeo4W Python."""
+        cfg = {
+            "action":               "mosaic",
+            "input_dir":            inp,
+            "output_dir":           out,
+            "output_name":          name,
+            "compress":             compress,
+            "quality":              quality,
+            "blocksize":            block,
+            "overviews":            ovr,
+            "overview_resampling":  resamp,
+            "nodata":               nodata,
+        }
+        self._run_osgeo_subprocess(cfg, name)
+
+    # ── Gemeinsame Subprocess-Ausfuehrung (convert & mosaic) ──────────────────
+    def _run_osgeo_subprocess(self, cfg: dict, log_stem: str) -> None:
+        """Startet _osgeo_runner.py als Subprocess; Log-Ausgabe + Fortschritt live im GUI."""
         logs_dir  = Path(SCRIPT_DIR) / "logs"
         logs_dir.mkdir(exist_ok=True)
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        log_path  = logs_dir / f"{Path(out).stem}_{timestamp}.log"
+        log_path  = logs_dir / f"{log_stem}_{timestamp}.log"
 
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
                                          encoding="utf-8") as tmp:
@@ -964,12 +1254,8 @@ class BandKonverterApp(tk.Tk):
                             val = None
                         if val is not None:
                             self.after(0, self._update_progress, float(val))
-                        # still write log and show line
-                        self._log_q.put(line)
-                        lf.write(line)
-                    else:
-                        self._log_q.put(line)
-                        lf.write(line)
+                    self._log_q.put(line)
+                    lf.write(line)
             proc.wait()
             self._log_q.put(f"\nLog gespeichert: {log_path}\n")
             if proc.returncode != 0:
