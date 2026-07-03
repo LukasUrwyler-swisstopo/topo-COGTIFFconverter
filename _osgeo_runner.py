@@ -46,6 +46,18 @@ def _info(cfg: dict) -> None:
             alpha_bands.append(i)
 
     nd_raw = ds.GetRasterBand(1).GetNoDataValue()
+
+    # Kompression & Layout (COG vs. gekacheltes TIFF vs. gestreiftes TIFF)
+    compression = ds.GetMetadataItem("COMPRESSION", "IMAGE_STRUCTURE") or "keine/unbekannt"
+    layout      = ds.GetMetadataItem("LAYOUT", "IMAGE_STRUCTURE")  # "COG" falls Cloud-Optimized-GeoTIFF erkannt
+    blk_x, blk_y = ds.GetRasterBand(1).GetBlockSize()
+    if layout == "COG":
+        layout_str = "COG"
+    elif blk_x < rx:
+        layout_str = f"Tiled TIFF ({blk_x}x{blk_y})"
+    else:
+        layout_str = "Striped TIFF"
+
     ds = None
 
     result = {
@@ -58,6 +70,8 @@ def _info(cfg: dict) -> None:
         "size_mb":      round(size, 1),
         "nodata":       nd_raw,
         "alpha_bands":  alpha_bands,
+        "compression":  compression,
+        "layout":       layout_str,
     }
     print(json.dumps(result, ensure_ascii=False), flush=True)
 

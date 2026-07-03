@@ -439,6 +439,7 @@ class BandKonverterApp(tk.Tk):
         path = filedialog.askdirectory(title="Input-Ordner (Kacheln) auswaehlen")
         if path:
             self._mosaic_in_var.set(path.replace("/", "\\"))
+            self._clear_log()
 
     def _browse_mosaic_output(self):
         path = filedialog.askdirectory(title="Output-Ordner auswaehlen")
@@ -492,6 +493,7 @@ class BandKonverterApp(tk.Tk):
             ("ColorInterp:",      "_info_colorinterp"),
             ("Aufloesung:",        "_info_res"),
             ("Datentyp:",         "_info_dtype"),
+            ("Kompression:",       "_info_compression"),
             ("Koordinatensys.:",  "_info_crs"),
             ("Dateigroesse:",      "_info_size"),
         ]
@@ -532,10 +534,13 @@ class BandKonverterApp(tk.Tk):
         preset_lbl.grid(row=0, column=0, sticky="w", pady=(0, 6))
         btn_frame = ttk.Frame(sec)
         btn_frame.grid(row=0, column=1, sticky="w", padx=(8, 0), pady=(0, 6))
+        self._preset_buttons  = []
+        self._active_preset_btn = None
         for name, labels, bands in PRESETS:
-            ttk.Button(btn_frame, text=name,
-                        command=lambda lb=labels, bd=bands: self._apply_preset(lb, bd)
-                        ).pack(side="left", padx=(0, 6))
+            btn = ttk.Button(btn_frame, text=name)
+            btn.config(command=lambda lb=labels, bd=bands, b=btn: self._apply_preset(lb, bd, b))
+            btn.pack(side="left", padx=(0, 6))
+            self._preset_buttons.append(btn)
 
         # Input-Bandbeschriftungen
         lbl1 = ttk.Label(sec, text="Input-Bandbeschriftungen:", font=("Segoe UI", 9, "bold"))
@@ -633,6 +638,13 @@ class BandKonverterApp(tk.Tk):
         hint.grid(row=5, column=0, columnspan=4, sticky="w", pady=(2, 0))
         self._dim_labels.append(hint)
 
+        self._compress_hint_lbl = ttk.Label(sec,
+            text="ℹ  Input ist bereits ein COGTIFF → Kompression auf DEFLATE (verlustfrei) gesetzt",
+            font=("Segoe UI", 8, "italic"))
+        self._compress_hint_lbl.grid(row=6, column=0, columnspan=4, sticky="w", pady=(2, 0))
+        self._compress_hint_lbl.grid_remove()
+        self._hint_labels.append(self._compress_hint_lbl)
+
         self._compress_var.trace_add("write", lambda *_: self._update_quality_state())
         self._update_quality_state()
 
@@ -648,10 +660,16 @@ class BandKonverterApp(tk.Tk):
         self._canvas.yview_scroll(-1*(event.delta//120), "units")
         return "break"
 
-    def _apply_preset(self, labels: List, bands: List):
+    def _apply_preset(self, labels: List, bands: List, btn=None):
         self._labels_var.set(", ".join(labels))
         self._bands_var.set(", ".join(str(b) for b in bands))
         self._update_preview()
+
+        if self._active_preset_btn is not None:
+            self._active_preset_btn.config(style="TButton")
+        if btn is not None:
+            btn.config(style="PresetActive.TButton")
+        self._active_preset_btn = btn
 
     def _update_preview(self):
         try:
@@ -679,6 +697,7 @@ class BandKonverterApp(tk.Tk):
             self._in_var.set(path)
             p = Path(path)
             self._out_var.set(str(p.parent / (p.stem + "_RGB" + p.suffix)))
+            self._clear_log()
             self._refresh_info()
 
     def _browse_output(self):
@@ -724,9 +743,10 @@ class BandKonverterApp(tk.Tk):
         src = self._in_var.get().strip()
         if not src or not os.path.isfile(src):
             for attr in ("_info_bands", "_info_colorinterp", "_info_res",
-                         "_info_dtype", "_info_crs", "_info_size"):
+                         "_info_dtype", "_info_compression", "_info_crs", "_info_size"):
                 getattr(self, attr).config(text="–")
             self._warn_alpha.grid_remove()
+            self._compress_hint_lbl.grid_remove()
             return
 
         if not self._osgeo_python or not os.path.isfile(self._osgeo_python):
@@ -740,13 +760,17 @@ class BandKonverterApp(tk.Tk):
             except Exception:
                 pass
             for attr in ("_info_bands", "_info_colorinterp", "_info_res",
-                         "_info_dtype", "_info_crs", "_info_size"):
+                         "_info_dtype", "_info_compression", "_info_crs", "_info_size"):
                 try:
                     getattr(self, attr).config(text="–")
                 except Exception:
                     pass
             try:
                 self._warn_alpha.grid_remove()
+            except Exception:
+                pass
+            try:
+                self._compress_hint_lbl.grid_remove()
             except Exception:
                 pass
 
@@ -777,6 +801,15 @@ class BandKonverterApp(tk.Tk):
                 self._info_colorinterp.config(text="  ".join(ci_parts))
                 self._info_res.config(text="{} × {} px".format(info.get('width'), info.get('height')))
                 self._info_dtype.config(text=info.get("dtype", "–"))
+                comp   = info.get("compression", "–")
+                layout = info.get("layout", "")
+                self._info_compression.config(
+                    text="{}  |  {}".format(comp, layout) if layout else comp)
+                if layout == "COG":
+                    self._compress_var.set("DEFLATE")
+                    self._compress_hint_lbl.grid()
+                else:
+                    self._compress_hint_lbl.grid_remove()
                 self._info_crs.config(text=info.get("crs", "–"))
                 try:
                     self._info_size.config(text="{:.1f} MB".format(info.get('size_mb', 0.0)))
@@ -882,6 +915,14 @@ class BandKonverterApp(tk.Tk):
         s.map("TButton",
             background=[("active", T["btn_hover"]), ("pressed", T["sep"])],
             foreground=[("active", T["fg"])],
+            relief=[("pressed", "flat")])
+        s.configure("PresetActive.TButton",
+            background=T["accent"], foreground="#000000",
+            bordercolor=T["accent"], relief="flat",
+            padding=(8, 4), focuscolor=T["panel"])
+        s.map("PresetActive.TButton",
+            background=[("active", T["accent"]), ("pressed", T["accent"])],
+            foreground=[("active", "#000000"), ("pressed", "#000000")],
             relief=[("pressed", "flat")])
         s.configure("TCombobox",
             fieldbackground=T["input"], background=T["btn"],
