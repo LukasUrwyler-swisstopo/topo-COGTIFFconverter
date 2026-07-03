@@ -1,5 +1,5 @@
 """
-01_GUI_cogtiff_4band_to_3band.py  –  COGTIFF Werkzeuge GUI
+01_GUI_cogtiffConverter.py  –  COGTIFF Werkzeuge GUI
 Tkinter-Oberflaeche mit zwei Tabs:
   - "COGTIFF erstellen"  : Kachel-TIFFs (+.tfw) zu VRT mosaikieren und als COGTIFF schreiben
   - "Baender aendern"    : flexibler Band-Konverter (RGBN → RGB / NRG usw.)

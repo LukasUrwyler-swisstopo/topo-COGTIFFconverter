@@ -12,7 +12,7 @@ def load_module_from_path(name, path):
 def test_constants_and_presets():
     gui_mod = load_module_from_path(
         "gui_module",
-        os.path.join(os.path.dirname(__file__), "01_GUI_cogtiff_4band_to_3band.py"),
+        os.path.join(os.path.dirname(__file__), "01_GUI_cogtiffConverter.py"),
     )
 
     assert os.path.basename(gui_mod.RUNNER_SCRIPT) == "_osgeo_runner.py"
@@ -23,7 +23,7 @@ def test_constants_and_presets():
 def test_detect_python_home_returns_string():
     gui_mod = load_module_from_path(
         "gui_module",
-        os.path.join(os.path.dirname(__file__), "01_GUI_cogtiff_4band_to_3band.py"),
+        os.path.join(os.path.dirname(__file__), "01_GUI_cogtiffConverter.py"),
     )
 
     candidate = os.path.join("C:", "OSGeo4W", "bin", "python3.exe")
@@ -34,7 +34,7 @@ def test_detect_python_home_returns_string():
 def test_app_class_exists():
     gui_mod = load_module_from_path(
         "gui_module",
-        os.path.join(os.path.dirname(__file__), "01_GUI_cogtiff_4band_to_3band.py"),
+        os.path.join(os.path.dirname(__file__), "01_GUI_cogtiffConverter.py"),
     )
     assert callable(gui_mod.BandKonverterApp)
 
@@ -42,7 +42,7 @@ def test_app_class_exists():
 def test_nodata_presets_for_mosaic_tab():
     gui_mod = load_module_from_path(
         "gui_module",
-        os.path.join(os.path.dirname(__file__), "01_GUI_cogtiff_4band_to_3band.py"),
+        os.path.join(os.path.dirname(__file__), "01_GUI_cogtiffConverter.py"),
     )
     assert set(gui_mod.NODATA_OPTIONS.keys()) == {"8bit", "16bit"}
     assert "0 0 0" in gui_mod.NODATA_OPTIONS["8bit"]

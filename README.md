@@ -8,7 +8,7 @@ Zwei GDAL-Werkzeuge fuer Cloud-Optimized GeoTIFFs (COG), als Tabs im selben GUI:
 ## GUI
 
 ```bash
-python 01_GUI_cogtiff_4band_to_3band.py
+python 01_GUI_cogtiffConverter.py
 ```
 <img width="1219" height="1363" alt="grafik" src="https://github.com/user-attachments/assets/a644bfba-4752-4737-9ced-3a938701f7c6" />
 
@@ -28,7 +28,7 @@ Typische Anwendungsfälle mit swisstopo-Luftbildern (DOP) fuer die Band-Konverti
 
 | Datei | Beschreibung |
 |-------|-------------|
-| `01_GUI_cogtiff_4band_to_3band.py` | Tkinter-GUI — startet mit Standard-Python |
+| `01_GUI_cogtiffConverter.py` | Tkinter-GUI — startet mit Standard-Python |
 | `_osgeo_runner.py` | GDAL-Worker — wird intern via OSGeo4W Python als Subprocess gestartet |
 | `02_convertDATA_cogtiff_4band_to_3band.py` | Standalone-Script für die Kommandozeile (erfordert OSGeo4W Python direkt) |
 
@@ -46,7 +46,7 @@ Typische Anwendungsfälle mit swisstopo-Luftbildern (DOP) fuer die Band-Konverti
 ## GUI starten
 
 ```bash
-python 01_GUI_cogtiff_4band_to_3band.py
+python 01_GUI_cogtiffConverter.py
 ```
 
 Beim ersten Start erkennt das GUI automatisch die OSGeo4W-Installation. Der Pfad kann über die Schaltfläche **Ändern…** manuell gesetzt und wird in `_cogtiff_config.json` gespeichert.
@@ -139,7 +139,7 @@ Konfiguration direkt im Script-Kopf anpassen (`INPUT_PATH`, `OUTPUT_PATH`, `OUTP
 ## Architektur
 
 ```
-01_GUI_cogtiff_4band_to_3band.py   (Standard-Python, tkinter)
+01_GUI_cogtiffConverter.py         (Standard-Python, tkinter)
         │
         │  JSON-Config (tempfile)
         ▼
