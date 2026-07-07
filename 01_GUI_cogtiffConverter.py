@@ -353,7 +353,7 @@ class BandKonverterApp(tk.Tk):
         sec.pack(fill="x", pady=(0, 6))
         sec.columnconfigure(1, weight=1)
 
-        lbl = ttk.Label(sec, text="Input-Ordner (TIFF-Tiles oder einzelne TIFF-Dateien):", font=("Segoe UI", 9, "bold"))
+        lbl = ttk.Label(sec, text="Input-Ordner (Tiles / einzelne TIFF):", font=("Segoe UI", 9, "bold"))
         lbl.grid(row=0, column=0, sticky="w", pady=3)
         self._mosaic_in_var = tk.StringVar()
         ttk.Entry(sec, textvariable=self._mosaic_in_var
