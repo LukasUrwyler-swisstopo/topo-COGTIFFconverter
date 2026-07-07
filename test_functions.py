@@ -44,7 +44,7 @@ def test_nodata_presets_for_mosaic_tab():
         "gui_module",
         os.path.join(os.path.dirname(__file__), "01_GUI_cogtiffConverter.py"),
     )
-    assert set(gui_mod.NODATA_OPTIONS.keys()) == {"8bit", "16bit"}
+    assert set(gui_mod.NODATA_OPTIONS.keys()) == {"(unveraendert)", "8bit", "16bit"}
     assert "0 0 0" in gui_mod.NODATA_OPTIONS["8bit"]
     assert "0 0 0 0" in gui_mod.NODATA_OPTIONS["16bit"]
 

@@ -84,6 +84,15 @@ def _detect_python_home(python_exe: str) -> str:
     return root_dir
 
 
+def _format_bitdepth(info: dict) -> str:
+    """Formatiert die Bit-Tiefe aus dem 'info'-Ergebnis des Runners (z.B. '8bit (Byte)')."""
+    bits = info.get("bitdepth")
+    dt   = info.get("dtype", "")
+    if not bits:
+        return dt or "–"
+    return f"{bits}bit ({dt})" if dt else f"{bits}bit"
+
+
 def _save_osgeo_config(path: str) -> None:
     try:
         cfg: Dict = {}
@@ -285,15 +294,16 @@ class BandKonverterApp(tk.Tk):
                 lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfig(win_id, width=e.width))
-        canvas.bind("<MouseWheel>",
-                    lambda e: canvas.yview_scroll(-1*(e.delta//120), "units"))
         setattr(self, canvas_attr, canvas)
         setattr(self, frame_attr, sf)
         return sf
 
     def _build_bands_tab(self, parent):
         sf = self._build_scrollable(parent, "_canvas", "_sf")
+        # Mausrad soll ueberall im Formular scrollen, nicht nur ueber der leeren Canvas-Flaeche:
+        # "TCombobox" ueberschreibt das native Wert-Wechseln per Mausrad, "all" deckt alle uebrigen Widgets ab.
         self.bind_class("TCombobox", "<MouseWheel>", self._fwd_wheel)
+        self.bind_all("<MouseWheel>", self._fwd_wheel)
 
         self._build_dateien(sf)
         self._build_dateiinfo(sf)
@@ -343,7 +353,7 @@ class BandKonverterApp(tk.Tk):
         sec.pack(fill="x", pady=(0, 6))
         sec.columnconfigure(1, weight=1)
 
-        lbl = ttk.Label(sec, text="Input-Ordner (Tiles):", font=("Segoe UI", 9, "bold"))
+        lbl = ttk.Label(sec, text="Input-Ordner (TIFF-Tiles oder einzelne TIFF-Dateien):", font=("Segoe UI", 9, "bold"))
         lbl.grid(row=0, column=0, sticky="w", pady=3)
         self._mosaic_in_var = tk.StringVar()
         ttk.Entry(sec, textvariable=self._mosaic_in_var
@@ -578,7 +588,7 @@ class BandKonverterApp(tk.Tk):
             ("BANDS:",           "_mosaic_info_bands"),
             ("ColorInterp:",      "_mosaic_info_colorinterp"),
             ("Aufloesung:",        "_mosaic_info_res"),
-            ("Datentyp:",         "_mosaic_info_dtype"),
+            ("Bit-Tiefe:",        "_mosaic_info_bitdepth"),
             ("Kompression:",       "_mosaic_info_compression"),
             ("Koordinatensys.:",  "_mosaic_info_crs"),
             ("Dateigroesse:",      "_mosaic_info_size"),
@@ -659,7 +669,7 @@ class BandKonverterApp(tk.Tk):
             ("BANDS:",           "_info_bands"),
             ("ColorInterp:",      "_info_colorinterp"),
             ("Aufloesung:",        "_info_res"),
-            ("Datentyp:",         "_info_dtype"),
+            ("Bit-Tiefe:",        "_info_bitdepth"),
             ("Kompression:",       "_info_compression"),
             ("Koordinatensys.:",  "_info_crs"),
             ("Dateigroesse:",      "_info_size"),
@@ -829,13 +839,14 @@ class BandKonverterApp(tk.Tk):
         return "break"
 
     def _canvas_for_widget(self, widget):
-        """Ermittelt die scrollbare Canvas, zu der widget gehoert (Baender- oder Mosaik-Tab)."""
+        """Ermittelt die scrollbare Canvas, zu der widget gehoert (Baender- oder Mosaik-Tab),
+        egal ob widget die Canvas selbst oder ein beliebiges Kind-Widget darin ist."""
         w = widget
         while w is not None:
-            if w is getattr(self, "_sf", None):
-                return self._canvas
-            if w is getattr(self, "_mosaic_sf", None):
-                return self._mosaic_canvas
+            if w in (getattr(self, "_canvas", None), getattr(self, "_sf", None)):
+                return getattr(self, "_canvas", None)
+            if w in (getattr(self, "_mosaic_canvas", None), getattr(self, "_mosaic_sf", None)):
+                return getattr(self, "_mosaic_canvas", None)
             w = w.master
         return None
 
@@ -934,7 +945,7 @@ class BandKonverterApp(tk.Tk):
         src = self._in_var.get().strip()
         if not src or not os.path.isfile(src):
             for attr in ("_info_bands", "_info_colorinterp", "_info_res",
-                         "_info_dtype", "_info_compression", "_info_crs", "_info_size"):
+                         "_info_bitdepth", "_info_compression", "_info_crs", "_info_size"):
                 getattr(self, attr).config(text="–")
             self._warn_alpha.grid_remove()
             self._compress_hint_lbl.grid_remove()
@@ -951,7 +962,7 @@ class BandKonverterApp(tk.Tk):
             except Exception:
                 pass
             for attr in ("_info_bands", "_info_colorinterp", "_info_res",
-                         "_info_dtype", "_info_compression", "_info_crs", "_info_size"):
+                         "_info_bitdepth", "_info_compression", "_info_crs", "_info_size"):
                 try:
                     getattr(self, attr).config(text="–")
                 except Exception:
@@ -991,7 +1002,7 @@ class BandKonverterApp(tk.Tk):
 
                 self._info_colorinterp.config(text="  ".join(ci_parts))
                 self._info_res.config(text="{} × {} px".format(info.get('width'), info.get('height')))
-                self._info_dtype.config(text=info.get("dtype", "–"))
+                self._info_bitdepth.config(text=_format_bitdepth(info))
                 comp   = info.get("compression", "–")
                 layout = info.get("layout", "")
                 self._info_compression.config(
@@ -1081,7 +1092,7 @@ class BandKonverterApp(tk.Tk):
         """Liest Datei-Info der ersten gefundenen Kachel im Input-Ordner (stellvertretend fuer alle Kacheln)."""
         src_dir = self._mosaic_in_var.get().strip()
         info_attrs = ("_mosaic_info_bands", "_mosaic_info_colorinterp", "_mosaic_info_res",
-                      "_mosaic_info_dtype", "_mosaic_info_compression", "_mosaic_info_crs", "_mosaic_info_size")
+                      "_mosaic_info_bitdepth", "_mosaic_info_compression", "_mosaic_info_crs", "_mosaic_info_size")
 
         def _reset():
             for attr in info_attrs:
@@ -1122,7 +1133,7 @@ class BandKonverterApp(tk.Tk):
                 self._mosaic_info_bands.config(text=str(info.get("bands")))
                 self._mosaic_info_colorinterp.config(text="  ".join(ci_parts))
                 self._mosaic_info_res.config(text="{} × {} px".format(info.get('width'), info.get('height')))
-                self._mosaic_info_dtype.config(text=info.get("dtype", "–"))
+                self._mosaic_info_bitdepth.config(text=_format_bitdepth(info))
                 comp   = info.get("compression", "–")
                 layout = info.get("layout", "")
                 self._mosaic_info_compression.config(

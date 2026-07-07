@@ -28,11 +28,13 @@ def _info(cfg: dict) -> None:
     if ds is None:
         raise RuntimeError(f"GDAL konnte die Datei nicht oeffnen: {input_path}")
 
-    bc   = ds.RasterCount
-    rx   = ds.RasterXSize
-    ry   = ds.RasterYSize
-    dt   = gdal.GetDataTypeName(ds.GetRasterBand(1).DataType)
-    srs  = ds.GetSpatialRef()
+    bc     = ds.RasterCount
+    rx     = ds.RasterXSize
+    ry     = ds.RasterYSize
+    gdt    = ds.GetRasterBand(1).DataType
+    dt     = gdal.GetDataTypeName(gdt)
+    bits   = gdal.GetDataTypeSize(gdt)
+    srs    = ds.GetSpatialRef()
     crs  = srs.GetName() if srs else "nicht gesetzt"
     size = Path(input_path).stat().st_size / (1024 ** 2)
 
@@ -66,6 +68,7 @@ def _info(cfg: dict) -> None:
         "width":        rx,
         "height":       ry,
         "dtype":        dt,
+        "bitdepth":     bits,
         "crs":          crs,
         "size_mb":      round(size, 1),
         "nodata":       nd_raw,
