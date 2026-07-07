@@ -150,8 +150,12 @@ PRESETS = [
     ("NRGB → NRG",  ["N", "R", "G", "B"], [1, 2, 3]),
 ]
 
-# ─── NoData-Presets fuer die Mosaik-Erstellung (abhaengig von Bit-Tiefe) ──────
+# ─── Bit-Tiefe-Optionen fuer den Output der Mosaik-Erstellung ─────────────────
+BITDEPTH_OUTPUT_OPTIONS = ["(unveraendert)", "8bit", "16bit"]
+
+# ─── NoData-Presets fuer die Mosaik-Erstellung (abhaengig von Ziel-Bit-Tiefe) ─
 NODATA_OPTIONS = {
+    "(unveraendert)": ["(kein NoData)", "0 0 0", "0 0 0 0", "255 255 255", "65535 65535 65535 65535"],
     "8bit":  ["(kein NoData)", "0 0 0", "255 255 255"],
     "16bit": ["(kein NoData)", "0 0 0 0", "65535 65535 65535"],
 }
@@ -187,6 +191,7 @@ class BandKonverterApp(tk.Tk):
 
         self._dim_labels    = []
         self._accent_labels = []
+        self._hint_labels   = []
 
         self._osgeo_python = _detect_osgeo_python()
         self._osgeo_lbl    = None
@@ -264,29 +269,36 @@ class BandKonverterApp(tk.Tk):
         ttk.Button(self._btn_row, text="Log loeschen",
                     command=self._clear_log).pack(side="right")
 
-    def _build_bands_tab(self, parent):
-        # Scrollbarer Formular-Bereich
+    def _build_scrollable(self, parent, canvas_attr: str, frame_attr: str):
+        """Erstellt einen scrollbaren Formular-Bereich (Canvas + vertikale Scrollbar) in parent.
+        Canvas und Inhalts-Frame werden unter canvas_attr/frame_attr abgelegt; Inhalts-Frame wird zurueckgegeben."""
         outer = ttk.Frame(parent)
         outer.pack(fill="both", expand=True)
-        self._canvas = tk.Canvas(outer, highlightthickness=0)
-        vsb = ttk.Scrollbar(outer, orient="vertical", command=self._canvas.yview)
-        self._canvas.configure(yscrollcommand=vsb.set)
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
         vsb.pack(side="right", fill="y")
-        self._canvas.pack(side="left", fill="both", expand=True)
-        self._sf  = ttk.Frame(self._canvas)
-        win_id    = self._canvas.create_window((0, 0), window=self._sf, anchor="nw")
-        self._sf.bind("<Configure>",
-                      lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")))
-        self._canvas.bind("<Configure>",
-                          lambda e: self._canvas.itemconfig(win_id, width=e.width))
-        self._canvas.bind("<MouseWheel>",
-                          lambda e: self._canvas.yview_scroll(-1*(e.delta//120), "units"))
+        canvas.pack(side="left", fill="both", expand=True)
+        sf     = ttk.Frame(canvas)
+        win_id = canvas.create_window((0, 0), window=sf, anchor="nw")
+        sf.bind("<Configure>",
+                lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfig(win_id, width=e.width))
+        canvas.bind("<MouseWheel>",
+                    lambda e: canvas.yview_scroll(-1*(e.delta//120), "units"))
+        setattr(self, canvas_attr, canvas)
+        setattr(self, frame_attr, sf)
+        return sf
+
+    def _build_bands_tab(self, parent):
+        sf = self._build_scrollable(parent, "_canvas", "_sf")
         self.bind_class("TCombobox", "<MouseWheel>", self._fwd_wheel)
 
-        self._build_dateien(self._sf)
-        self._build_dateiinfo(self._sf)
-        self._build_bandconfig(self._sf)
-        self._build_cog_optionen(self._sf)
+        self._build_dateien(sf)
+        self._build_dateiinfo(sf)
+        self._build_bandconfig(sf)
+        self._build_cog_optionen(sf)
 
         btn_row = ttk.Frame(parent)
         btn_row.pack(fill="x", pady=(6, 0))
@@ -295,9 +307,22 @@ class BandKonverterApp(tk.Tk):
         self._start_btn.pack(side="right", ipadx=22, ipady=7)
 
     def _build_mosaic_tab(self, parent):
-        self._build_mosaic_dateien(parent)
-        self._build_mosaic_nodata(parent)
-        self._build_mosaic_cog_optionen(parent)
+        # Bit-Tiefe (Output) beeinflusst die NoData-Presets (Input-Gruppe) und wird
+        # daher schon hier definiert, bevor ihr Widget in der Output-Gruppe entsteht.
+        self._mosaic_bitdepth_out_var = tk.StringVar(value="(unveraendert)")
+
+        sf = self._build_scrollable(parent, "_mosaic_canvas", "_mosaic_sf")
+
+        self._build_mosaic_dateien(sf)
+
+        self._build_group_header(sf, "Input-Parameter")
+        self._build_mosaic_dateiinfo(sf)
+        self._build_mosaic_nodata_input(sf)
+
+        self._build_group_header(sf, "Output-Parameter")
+        self._build_mosaic_bandconfig(sf)
+        self._build_mosaic_bitdepth_output(sf)
+        self._build_mosaic_cog_optionen(sf)
 
         btn_row = ttk.Frame(parent)
         btn_row.pack(fill="x", pady=(6, 0))
@@ -305,13 +330,20 @@ class BandKonverterApp(tk.Tk):
                                              command=self._start_mosaic)
         self._start_mosaic_btn.pack(side="right", ipadx=22, ipady=7)
 
+    def _build_group_header(self, parent, text):
+        """Visueller Zwischentitel, um Einstellungen thematisch zu gruppieren (z.B. Input-/Output-Parameter)."""
+        lbl = ttk.Label(parent, text=text, font=("Segoe UI", 10, "bold"))
+        lbl.pack(fill="x", pady=(10, 2), anchor="w")
+        self._accent_labels.append(lbl)
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(0, 6))
+
     def _build_mosaic_dateien(self, parent):
         sec = ttk.LabelFrame(parent, text="Dateien", padding=10,
                               style="Section.TLabelframe")
         sec.pack(fill="x", pady=(0, 6))
         sec.columnconfigure(1, weight=1)
 
-        lbl = ttk.Label(sec, text="Input-Ordner (Kacheln):", font=("Segoe UI", 9, "bold"))
+        lbl = ttk.Label(sec, text="Input-Ordner (Tiles):", font=("Segoe UI", 9, "bold"))
         lbl.grid(row=0, column=0, sticky="w", pady=3)
         self._mosaic_in_var = tk.StringVar()
         ttk.Entry(sec, textvariable=self._mosaic_in_var
@@ -347,38 +379,127 @@ class BandKonverterApp(tk.Tk):
         name_hint.grid(row=5, column=1, sticky="w", padx=(8, 0))
         self._dim_labels.append(name_hint)
 
-    def _build_mosaic_nodata(self, parent):
-        sec = ttk.LabelFrame(parent, text="Bit-Tiefe & NoData", padding=10,
+    def _build_mosaic_nodata_input(self, parent):
+        sec = ttk.LabelFrame(parent, text="NoData-Wert (Input)", padding=10,
                               style="Section.TLabelframe")
         sec.pack(fill="x", pady=(0, 6))
 
-        bd_lbl = ttk.Label(sec, text="Bit-Tiefe (Input):", font=("Segoe UI", 9, "bold"))
-        bd_lbl.grid(row=0, column=0, sticky="w", pady=3)
-        self._mosaic_bitdepth_var = tk.StringVar(value="8bit")
-        bd_combo = ttk.Combobox(sec, textvariable=self._mosaic_bitdepth_var,
-                                 values=["8bit", "16bit"], state="readonly", width=8)
-        bd_combo.grid(row=0, column=1, sticky="w", padx=(8, 0), pady=3)
-
-        nd_lbl = ttk.Label(sec, text="NoData-Wert (Input):", font=("Segoe UI", 9, "bold"))
-        nd_lbl.grid(row=1, column=0, sticky="w", pady=(6, 3))
+        nd_lbl = ttk.Label(sec, text="NoData-Wert:", font=("Segoe UI", 9, "bold"))
+        nd_lbl.grid(row=0, column=0, sticky="w", pady=3)
         self._mosaic_nodata_var   = tk.StringVar()
         self._mosaic_nodata_combo = ttk.Combobox(sec, textvariable=self._mosaic_nodata_var,
                                                   state="readonly", width=22)
-        self._mosaic_nodata_combo.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(6, 3))
+        self._mosaic_nodata_combo.grid(row=0, column=1, sticky="w", padx=(8, 0), pady=3)
 
         hint = ttk.Label(sec,
             text="Gilt fuer -srcnodata / -vrtnodata / -a_nodata  |  Hintergrundfarbe der Kacheln pruefen",
             font=("", 8))
-        hint.grid(row=2, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        hint.grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 0))
         self._dim_labels.append(hint)
 
-        bd_combo.bind("<<ComboboxSelected>>", lambda _: self._update_mosaic_nodata_options())
+        # Vorschlaege richten sich nach der (noch zu bauenden) Bit-Tiefe (Output);
+        # Standardwert "(unveraendert)" ist zu diesem Zeitpunkt bereits gesetzt.
         self._update_mosaic_nodata_options()
 
     def _update_mosaic_nodata_options(self):
-        opts = NODATA_OPTIONS.get(self._mosaic_bitdepth_var.get(), ["(kein NoData)"])
+        opts = NODATA_OPTIONS.get(self._mosaic_bitdepth_out_var.get(), ["(kein NoData)"])
         self._mosaic_nodata_combo.config(values=opts)
         self._mosaic_nodata_var.set(opts[1] if len(opts) > 1 else opts[0])
+
+    def _build_mosaic_bitdepth_output(self, parent):
+        sec = ttk.LabelFrame(parent, text="Bit-Tiefe (Output)", padding=10,
+                              style="Section.TLabelframe")
+        sec.pack(fill="x", pady=(0, 6))
+
+        bd_lbl = ttk.Label(sec, text="Bit-Tiefe:", font=("Segoe UI", 9, "bold"))
+        bd_lbl.grid(row=0, column=0, sticky="w", pady=3)
+        bd_combo = ttk.Combobox(sec, textvariable=self._mosaic_bitdepth_out_var,
+                                 values=BITDEPTH_OUTPUT_OPTIONS, state="readonly", width=14)
+        bd_combo.grid(row=0, column=1, sticky="w", padx=(8, 0), pady=3)
+        bd_hint = ttk.Label(sec,
+            text="Quell-Bit-Tiefe wird automatisch erkannt  |  '(unveraendert)' = wie Input beibehalten",
+            font=("", 8))
+        bd_hint.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 6))
+        self._dim_labels.append(bd_hint)
+
+        bd_combo.bind("<<ComboboxSelected>>", lambda _: self._update_mosaic_nodata_options())
+
+    def _build_mosaic_bandconfig(self, parent):
+        sec = ttk.LabelFrame(parent, text="Band-Konfiguration (optional)", padding=10,
+                              style="Section.TLabelframe")
+        sec.pack(fill="x", pady=(0, 6))
+        sec.columnconfigure(1, weight=1)
+
+        # Schnellauswahl-Buttons
+        preset_lbl = ttk.Label(sec, text="Schnellauswahl:", font=("Segoe UI", 9, "bold"))
+        preset_lbl.grid(row=0, column=0, sticky="w", pady=(0, 6))
+        btn_frame = ttk.Frame(sec)
+        btn_frame.grid(row=0, column=1, sticky="w", padx=(8, 0), pady=(0, 6))
+        self._mosaic_preset_buttons     = []
+        self._mosaic_active_preset_btn  = None
+        for name, labels, bands in PRESETS:
+            btn = ttk.Button(btn_frame, text=name)
+            btn.config(command=lambda lb=labels, bd=bands, b=btn: self._apply_mosaic_preset(lb, bd, b))
+            btn.pack(side="left", padx=(0, 6))
+            self._mosaic_preset_buttons.append(btn)
+        reset_btn = ttk.Button(btn_frame, text="Zuruecksetzen",
+                                command=self._reset_mosaic_bandconfig)
+        reset_btn.pack(side="left", padx=(0, 6))
+
+        # Input-Bandbeschriftungen
+        lbl1 = ttk.Label(sec, text="Input-Bandbeschriftungen:", font=("Segoe UI", 9, "bold"))
+        lbl1.grid(row=1, column=0, sticky="w", pady=3)
+        self._mosaic_labels_var = tk.StringVar(value="")
+        ttk.Entry(sec, textvariable=self._mosaic_labels_var, width=30
+                   ).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=3)
+        h1 = ttk.Label(sec, text="Kommagetrennte Bezeichnungen der Quellbaender  (z.B.  R, G, B, N)",
+                        font=("", 8))
+        h1.grid(row=2, column=1, sticky="w", padx=(8, 0))
+        self._dim_labels.append(h1)
+
+        # Ausgabebaender
+        lbl2 = ttk.Label(sec, text="Ausgabebaender (Quellindizes):", font=("Segoe UI", 9, "bold"))
+        lbl2.grid(row=3, column=0, sticky="w", pady=(8, 3))
+        self._mosaic_bandsout_var = tk.StringVar(value="")
+        entry = ttk.Entry(sec, textvariable=self._mosaic_bandsout_var, width=20)
+        entry.grid(row=3, column=1, sticky="w", padx=(8, 0), pady=(8, 3))
+        entry.bind("<KeyRelease>", lambda _: self._update_mosaic_preview())
+        h2 = ttk.Label(sec,
+            text="Leer = alle Baender unveraendert  |  sonst 1-basierte Quellband-Indizes, z.B.  1, 2, 3  oder  4, 1, 2",
+            font=("", 8))
+        h2.grid(row=4, column=1, sticky="w", padx=(8, 0))
+        self._dim_labels.append(h2)
+
+        # Vorschau
+        lbl3 = ttk.Label(sec, text="Band-Mapping Vorschau:", font=("Segoe UI", 9, "bold"))
+        lbl3.grid(row=5, column=0, sticky="nw", pady=(10, 3))
+        self._mosaic_preview_lbl = ttk.Label(sec, text="(alle Baender, unveraendert)",
+                                              font=("Courier New", 9),
+                                              justify="left", wraplength=500)
+        self._mosaic_preview_lbl.grid(row=5, column=1, sticky="w", padx=(8, 0), pady=(10, 3))
+        self._accent_labels.append(self._mosaic_preview_lbl)
+
+        self._mosaic_labels_var.trace_add("write", lambda *_: self._update_mosaic_preview())
+        self._mosaic_bandsout_var.trace_add("write", lambda *_: self._update_mosaic_preview())
+        self._update_mosaic_preview()
+
+    def _apply_mosaic_preset(self, labels: List, bands: List, btn=None):
+        self._apply_preset_generic(
+            self._mosaic_labels_var, self._mosaic_bandsout_var, self._update_mosaic_preview,
+            "_mosaic_active_preset_btn", labels, bands, btn)
+
+    def _reset_mosaic_bandconfig(self):
+        self._mosaic_labels_var.set("")
+        self._mosaic_bandsout_var.set("")
+        self._update_mosaic_preview()
+        if self._mosaic_active_preset_btn is not None:
+            self._mosaic_active_preset_btn.config(style="TButton")
+        self._mosaic_active_preset_btn = None
+
+    def _update_mosaic_preview(self):
+        self._update_preview_generic(self._mosaic_labels_var, self._mosaic_bandsout_var,
+                                      self._mosaic_preview_lbl,
+                                      empty_text="(alle Baender, unveraendert)")
 
     def _build_mosaic_cog_optionen(self, parent):
         sec = ttk.LabelFrame(parent, text="COG-Optionen", padding=10,
@@ -440,11 +561,57 @@ class BandKonverterApp(tk.Tk):
         if path:
             self._mosaic_in_var.set(path.replace("/", "\\"))
             self._clear_log()
+            self._refresh_mosaic_info()
 
     def _browse_mosaic_output(self):
         path = filedialog.askdirectory(title="Output-Ordner auswaehlen")
         if path:
             self._mosaic_out_var.set(path.replace("/", "\\"))
+
+    def _build_mosaic_dateiinfo(self, parent):
+        sec = ttk.LabelFrame(parent, text="Datei-Info  (aus Quelldatei gelesen)",
+                              padding=10, style="Section.TLabelframe")
+        sec.pack(fill="x", pady=(0, 6))
+        sec.columnconfigure(1, weight=1)
+
+        fields = [
+            ("BANDS:",           "_mosaic_info_bands"),
+            ("ColorInterp:",      "_mosaic_info_colorinterp"),
+            ("Aufloesung:",        "_mosaic_info_res"),
+            ("Datentyp:",         "_mosaic_info_dtype"),
+            ("Kompression:",       "_mosaic_info_compression"),
+            ("Koordinatensys.:",  "_mosaic_info_crs"),
+            ("Dateigroesse:",      "_mosaic_info_size"),
+        ]
+        for row, (label, attr) in enumerate(fields):
+            lbl = ttk.Label(sec, text=label, font=("Segoe UI", 9, "bold"))
+            lbl.grid(row=row, column=0, sticky="w", pady=1)
+            val = ttk.Label(sec, text="–", font=("Segoe UI", 9))
+            val.grid(row=row, column=1, sticky="w", padx=(8, 0), pady=1)
+            setattr(self, attr, val)
+            self._accent_labels.append(val)
+
+        self._mosaic_warn_alpha = ttk.Label(
+            sec,
+            text="⚠  Alpha-Kanal erkannt — geht bei Bandauswahl ohne diesen Kanal verloren; "
+                 "NoData-Wert unter 'NoData-Wert (Input)' pruefen.",
+            font=("Segoe UI", 8, "italic"), wraplength=560, justify="left",
+        )
+        self._mosaic_warn_alpha.grid(row=len(fields), column=0, columnspan=2,
+                                      sticky="w", pady=(4, 0))
+        self._mosaic_warn_alpha.grid_remove()
+        self._hint_labels.append(self._mosaic_warn_alpha)
+
+        info_hint = ttk.Label(sec,
+            text="Metadaten der ersten gefundenen Kachel im Input-Ordner (stellvertretend fuer alle Kacheln)",
+            font=("", 8))
+        info_hint.grid(row=len(fields) + 1, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self._dim_labels.append(info_hint)
+
+        refresh_btn = ttk.Button(sec, text="Datei-Info aktualisieren",
+                                  command=self._refresh_mosaic_info)
+        refresh_btn.grid(row=len(fields) + 2, column=0, columnspan=2,
+                          sticky="w", pady=(8, 0))
 
     def _build_dateien(self, parent):
         sec = ttk.LabelFrame(parent, text="Dateien", padding=10,
@@ -515,7 +682,6 @@ class BandKonverterApp(tk.Tk):
         self._warn_alpha.grid(row=len(fields), column=0, columnspan=2,
                                sticky="w", padx=(0, 0), pady=(4, 0))
         self._warn_alpha.grid_remove()
-        self._hint_labels = []
         self._hint_labels.append(self._warn_alpha)
 
         refresh_btn = ttk.Button(sec, text="Datei-Info aktualisieren",
@@ -657,35 +823,60 @@ class BandKonverterApp(tk.Tk):
 
     # ── Hilfsfunktionen ────────────────────────────────────────────────────────
     def _fwd_wheel(self, event):
-        self._canvas.yview_scroll(-1*(event.delta//120), "units")
+        canvas = self._canvas_for_widget(event.widget)
+        if canvas is not None:
+            canvas.yview_scroll(-1*(event.delta//120), "units")
         return "break"
 
-    def _apply_preset(self, labels: List, bands: List, btn=None):
-        self._labels_var.set(", ".join(labels))
-        self._bands_var.set(", ".join(str(b) for b in bands))
-        self._update_preview()
+    def _canvas_for_widget(self, widget):
+        """Ermittelt die scrollbare Canvas, zu der widget gehoert (Baender- oder Mosaik-Tab)."""
+        w = widget
+        while w is not None:
+            if w is getattr(self, "_sf", None):
+                return self._canvas
+            if w is getattr(self, "_mosaic_sf", None):
+                return self._mosaic_canvas
+            w = w.master
+        return None
 
-        if self._active_preset_btn is not None:
-            self._active_preset_btn.config(style="TButton")
-        if btn is not None:
-            btn.config(style="PresetActive.TButton")
-        self._active_preset_btn = btn
+    def _apply_preset(self, labels: List, bands: List, btn=None):
+        self._apply_preset_generic(
+            self._labels_var, self._bands_var, self._update_preview,
+            "_active_preset_btn", labels, bands, btn)
 
     def _update_preview(self):
+        self._update_preview_generic(self._labels_var, self._bands_var, self._preview_lbl)
+
+    # ── Generische Preset-/Vorschau-Logik (Bandkonfiguration, mehrfach genutzt) ─
+    def _apply_preset_generic(self, labels_var, bands_var, preview_update,
+                               active_attr: str, labels: List, bands: List, btn=None):
+        labels_var.set(", ".join(labels))
+        bands_var.set(", ".join(str(b) for b in bands))
+        preview_update()
+
+        active_btn = getattr(self, active_attr)
+        if active_btn is not None:
+            active_btn.config(style="TButton")
+        if btn is not None:
+            btn.config(style="PresetActive.TButton")
+        setattr(self, active_attr, btn)
+
+    def _update_preview_generic(self, labels_var, bands_var, preview_lbl, empty_text: str = "–"):
         try:
-            labels = [s.strip() for s in self._labels_var.get().split(",") if s.strip()]
-            bands  = [int(s.strip()) for s in self._bands_var.get().split(",")
+            labels = [s.strip() for s in labels_var.get().split(",") if s.strip()]
+            bands  = [int(s.strip()) for s in bands_var.get().split(",")
                       if s.strip().isdigit()]
             if not labels or not bands:
-                self._preview_lbl.config(text="–")
+                is_blank = not labels_var.get().strip() and not bands_var.get().strip()
+                preview_lbl.config(text=empty_text if is_blank else "–")
                 return
             parts = []
             for i, b in enumerate(bands, 1):
                 src_name = labels[b-1] if 0 < b <= len(labels) else f"Band{b}"
                 parts.append(f"Out{i} ← Quelle Band {b}  ({src_name})")
-            self._preview_lbl.config(text="\n".join(parts))
+            preview_lbl.config(text="\n".join(parts))
         except Exception:
-            self._preview_lbl.config(text="–")
+            preview_lbl.config(text="–")
 
     def _browse_input(self):
         path = filedialog.askopenfilename(
@@ -850,10 +1041,15 @@ class BandKonverterApp(tk.Tk):
             except Exception:
                 ui_error("Fehler beim Darstellen der Datei-Info")
 
+        self._fetch_file_info_async(src, ui_info, ui_error)
+
+    def _fetch_file_info_async(self, path: str, on_info, on_error) -> None:
+        """Ruft _osgeo_runner.py (Aktion 'info') fuer path als Subprocess auf;
+        Ergebnis wird ueber on_info(info_dict) / on_error(msg) im UI-Thread zugestellt."""
         def worker():
             tmp_name = None
             try:
-                cfg = {"action": "info", "input_path": src}
+                cfg = {"action": "info", "input_path": path}
                 with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
                     json.dump(cfg, tmp, ensure_ascii=False)
                     tmp_name = tmp.name
@@ -867,19 +1063,84 @@ class BandKonverterApp(tk.Tk):
                     pass
                 if result.returncode != 0:
                     err = (result.stdout or "") + "\n" + (result.stderr or "")
-                    self.after(0, ui_error, err.strip())
+                    self.after(0, on_error, err.strip())
                     return
                 info = json.loads(result.stdout.strip() or "{}")
-                self.after(0, ui_info, info)
+                self.after(0, on_info, info)
             except Exception as e:
                 try:
                     if tmp_name and os.path.exists(tmp_name):
                         os.unlink(tmp_name)
                 except Exception:
                     pass
-                self.after(0, ui_error, str(e))
+                self.after(0, on_error, str(e))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _refresh_mosaic_info(self):
+        """Liest Datei-Info der ersten gefundenen Kachel im Input-Ordner (stellvertretend fuer alle Kacheln)."""
+        src_dir = self._mosaic_in_var.get().strip()
+        info_attrs = ("_mosaic_info_bands", "_mosaic_info_colorinterp", "_mosaic_info_res",
+                      "_mosaic_info_dtype", "_mosaic_info_compression", "_mosaic_info_crs", "_mosaic_info_size")
+
+        def _reset():
+            for attr in info_attrs:
+                getattr(self, attr).config(text="–")
+            self._mosaic_warn_alpha.grid_remove()
+
+        if not src_dir or not os.path.isdir(src_dir):
+            _reset()
+            return
+
+        tiles = sorted(
+            {p for pat in ("*.tif", "*.tiff") for p in _glob.glob(os.path.join(src_dir, pat))}
+        )
+        if not tiles:
+            _reset()
+            self._mosaic_info_bands.config(text="(keine Kacheln gefunden)")
+            return
+        sample = tiles[0]
+
+        if not self._osgeo_python or not os.path.isfile(self._osgeo_python):
+            self._mosaic_info_bands.config(text="OSGeo4W Python nicht gefunden – bitte Pfad setzen")
+            return
+
+        def ui_error(msg):
+            try:
+                from tkinter import messagebox
+                messagebox.showerror("Datei-Info Fehler", msg, parent=self)
+            except Exception:
+                pass
+            _reset()
+
+        def ui_info(info):
+            try:
+                ci = info.get("colorinterp", [])
+                ci_parts = ["B{}:{}".format(i+1, c) for i, c in enumerate(ci)]
+                alpha_bands = info.get("alpha_bands", [])
+
+                self._mosaic_info_bands.config(text=str(info.get("bands")))
+                self._mosaic_info_colorinterp.config(text="  ".join(ci_parts))
+                self._mosaic_info_res.config(text="{} × {} px".format(info.get('width'), info.get('height')))
+                self._mosaic_info_dtype.config(text=info.get("dtype", "–"))
+                comp   = info.get("compression", "–")
+                layout = info.get("layout", "")
+                self._mosaic_info_compression.config(
+                    text="{}  |  {}".format(comp, layout) if layout else comp)
+                self._mosaic_info_crs.config(text=info.get("crs", "–"))
+                try:
+                    self._mosaic_info_size.config(text="{:.1f} MB".format(info.get('size_mb', 0.0)))
+                except Exception:
+                    pass
+
+                if alpha_bands:
+                    self._mosaic_warn_alpha.grid()
+                else:
+                    self._mosaic_warn_alpha.grid_remove()
+            except Exception:
+                ui_error("Fehler beim Darstellen der Datei-Info")
+
+        self._fetch_file_info_async(sample, ui_info, ui_error)
 
     # ── Theme ──────────────────────────────────────────────────────────────────
     def _toggle_theme(self):
@@ -1034,6 +1295,7 @@ class BandKonverterApp(tk.Tk):
             self._log("\n✔  Konvertierung erfolgreich abgeschlossen.\n")
         else:
             self._log("\n✘  Konvertierung fehlgeschlagen.\n")
+        self._show_done_popup(success, "Band-Konvertierung")
 
     def _on_done_mosaic(self, success: bool):
         self._running = False
@@ -1044,6 +1306,17 @@ class BandKonverterApp(tk.Tk):
             self._log("\n✔  COGTIFF erfolgreich erstellt.\n")
         else:
             self._log("\n✘  COGTIFF-Erstellung fehlgeschlagen.\n")
+        self._show_done_popup(success, "COGTIFF-Erstellung")
+
+    def _show_done_popup(self, success: bool, vorgang: str) -> None:
+        """Zeigt nach Abschluss eines Prozesses (Erfolg oder Fehler) ein Info-Fenster mit OK-Button."""
+        from tkinter import messagebox
+        if success:
+            messagebox.showinfo(f"{vorgang} abgeschlossen",
+                                 f"{vorgang} erfolgreich abgeschlossen.", parent=self)
+        else:
+            messagebox.showerror(f"{vorgang} fehlgeschlagen",
+                                  f"{vorgang} ist fehlgeschlagen.\nDetails siehe Log-Ausgabe.", parent=self)
 
     def _update_progress(self, fraction: float):
         """Update progressbar and ETA label. fraction in [0.0 .. 1.0]."""
@@ -1179,7 +1452,7 @@ class BandKonverterApp(tk.Tk):
         self._run_osgeo_subprocess(cfg, Path(out).stem)
 
     # ── Mosaik-Erstellung: Validierung & Start ────────────────────────────────
-    def _validate_mosaic(self) -> Tuple[bool, str, str, str]:
+    def _validate_mosaic(self) -> Tuple[bool, str, str, str, List[int], List[str]]:
         errors = []
         inp  = self._mosaic_in_var.get().strip()
         out  = self._mosaic_out_var.get().strip()
@@ -1202,17 +1475,28 @@ class BandKonverterApp(tk.Tk):
         if not name:
             errors.append("Ausgabedateiname fehlt.")
 
+        labels = [s.strip() for s in self._mosaic_labels_var.get().split(",") if s.strip()]
+        bands_raw = self._mosaic_bandsout_var.get().strip()
+        bands: List[int] = []
+        if bands_raw:
+            try:
+                bands = [int(s.strip()) for s in bands_raw.split(",") if s.strip()]
+                if not bands:
+                    raise ValueError
+            except Exception:
+                errors.append("Ausgabebaender ungueltig  (kommagetrennte Ganzzahlen erwartet, z.B.  1, 2, 3).")
+
         if errors:
             from tkinter import messagebox
             messagebox.showerror("Eingabe-Fehler",
                                   "\n\n".join(f"• {e}" for e in errors), parent=self)
-            return False, inp, out, name
-        return True, inp, out, name
+            return False, inp, out, name, bands, labels
+        return True, inp, out, name, bands, labels
 
     def _start_mosaic(self):
         if self._running:
             return
-        ok, inp, out, name = self._validate_mosaic()
+        ok, inp, out, name, bands, labels = self._validate_mosaic()
         if not ok:
             return
 
@@ -1223,6 +1507,8 @@ class BandKonverterApp(tk.Tk):
         resamp     = self._mosaic_resampling_var.get()
         nodata_raw = self._mosaic_nodata_var.get()
         nodata     = "" if nodata_raw.startswith("(") else nodata_raw
+        bitdepth_raw = self._mosaic_bitdepth_out_var.get()
+        bitdepth   = "" if bitdepth_raw.startswith("(") else bitdepth_raw
 
         self._running = True
         self._start_mosaic_btn.config(state="disabled")
@@ -1233,22 +1519,23 @@ class BandKonverterApp(tk.Tk):
 
         threading.Thread(
             target=self._run_mosaic_thread,
-            args=(inp, out, name, compress, quality, block, ovr, resamp, nodata),
+            args=(inp, out, name, bands, labels, compress, quality, block, ovr, resamp, nodata, bitdepth),
             daemon=True,
         ).start()
 
-    def _run_mosaic_thread(self, inp, out, name,
-                           compress, quality, block, ovr, resamp, nodata):
+    def _run_mosaic_thread(self, inp, out, name, bands, labels,
+                           compress, quality, block, ovr, resamp, nodata, bitdepth):
         try:
-            self._exec_mosaic_with_osgeo(inp, out, name, compress, quality, block, ovr, resamp, nodata)
+            self._exec_mosaic_with_osgeo(inp, out, name, bands, labels,
+                                          compress, quality, block, ovr, resamp, nodata, bitdepth)
             self.after(0, self._on_done_mosaic, True)
         except Exception as e:
             self._log_q.put(f"\n[FEHLER] {e}\n")
             self._log_q.put(traceback.format_exc())
             self.after(0, self._on_done_mosaic, False)
 
-    def _exec_mosaic_with_osgeo(self, inp, out, name,
-                                 compress, quality, block, ovr, resamp, nodata):
+    def _exec_mosaic_with_osgeo(self, inp, out, name, bands, labels,
+                                 compress, quality, block, ovr, resamp, nodata, bitdepth):
         """Startet _osgeo_runner.py (Aktion 'mosaic') als Subprocess mit OSGeo4W Python."""
         cfg = {
             "action":               "mosaic",
@@ -1261,6 +1548,9 @@ class BandKonverterApp(tk.Tk):
             "overviews":            ovr,
             "overview_resampling":  resamp,
             "nodata":               nodata,
+            "output_bands":         bands,
+            "input_band_labels":    labels,
+            "output_bitdepth":      bitdepth,
         }
         self._run_osgeo_subprocess(cfg, name)
 

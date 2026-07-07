@@ -205,6 +205,14 @@ def _convert(cfg: dict) -> None:
     _log("Fertig.")
 
 
+#: Nominal Wertebereiche je Bit-Tiefe, fuer die automatische Skalierung
+#: bei einer Bit-Tiefe-Konvertierung (z.B. 16bit -> 8bit).
+_BITDEPTH_RANGES = {
+    "8bit":  (0, 255),
+    "16bit": (0, 65535),
+}
+
+
 def _mosaic(cfg: dict) -> None:
     """Mosaikiert Kachel-TIFFs (VRT) und schreibt das Ergebnis als COGTIFF. Fortschritt auf stdout."""
     from osgeo import gdal
@@ -218,6 +226,9 @@ def _mosaic(cfg: dict) -> None:
     overviews           = cfg.get("overviews",           "AUTO")
     overview_resampling = cfg.get("overview_resampling", "AVERAGE")
     nodata              = cfg.get("nodata",              "").strip()
+    output_bands        = cfg.get("output_bands",        []) or []
+    input_band_labels   = cfg.get("input_band_labels",   []) or []
+    output_bitdepth     = cfg.get("output_bitdepth",     "").strip()
 
     def _log(msg: str) -> None:
         print(msg, flush=True)
@@ -269,6 +280,41 @@ def _mosaic(cfg: dict) -> None:
     a_nodata   = nodata.split()[0] if nodata else None
     nodata_val = float(a_nodata) if a_nodata is not None else None
 
+    src_ds = gdal.Open(str(vrt_path), gdal.GA_ReadOnly)
+    if src_ds is None:
+        raise RuntimeError(f"GDAL konnte das VRT nicht oeffnen: {vrt_path}")
+
+    band_count = src_ds.RasterCount
+    src_dtype  = src_ds.GetRasterBand(1).DataType
+
+    # --- Band-Auswahl (analog zur 'convert'-Aktion) ---
+    if any(b < 1 or b > band_count for b in output_bands):
+        raise ValueError(
+            f"Ungueltige Band-Indizes {output_bands} - "
+            f"Mosaik hat {band_count} Baender (erlaubt: 1-{band_count})."
+        )
+    band_list = output_bands or None
+    if output_bands:
+        labels = list(input_band_labels) or [f"Band{i}" for i in range(1, band_count + 1)]
+        while len(labels) < band_count:
+            labels.append(f"Band{len(labels) + 1}")
+        out_labels = [labels[b - 1] for b in output_bands]
+        _log(f"  Ausgabebaender : {dict(enumerate(out_labels, 1))}  (Quellindizes: {output_bands})")
+
+    # --- Bit-Tiefe-Konvertierung (Output) ---
+    output_type  = None
+    scale_params = None
+    if output_bitdepth in _BITDEPTH_RANGES:
+        dst_min, dst_max = _BITDEPTH_RANGES[output_bitdepth]
+        dst_gdal_type = gdal.GDT_Byte if output_bitdepth == "8bit" else gdal.GDT_UInt16
+        if dst_gdal_type != src_dtype:
+            src_min, src_max = (0, 255) if src_dtype == gdal.GDT_Byte else _BITDEPTH_RANGES["16bit"]
+            n_out_bands  = len(output_bands) if output_bands else band_count
+            output_type  = dst_gdal_type
+            scale_params = [[src_min, src_max, dst_min, dst_max] for _ in range(n_out_bands)]
+            _log(f"  Bit-Tiefe     : {gdal.GetDataTypeName(src_dtype)} -> {gdal.GetDataTypeName(dst_gdal_type)} "
+                 f"(skaliert {src_min}-{src_max} -> {dst_min}-{dst_max})")
+
     _log(f"\nSchreibe COGTIFF: {out_path}")
     _log(f"  Kompression   : {compress}" + (f" (QUALITY={quality})" if compress.upper() == "JPEG" else ""))
     _log(f"  Kachelgroesse : {blocksize}")
@@ -276,12 +322,18 @@ def _mosaic(cfg: dict) -> None:
     _log(f"  NoData        : {nodata_val if nodata_val is not None else '(nicht gesetzt)'}")
     _log("  Koordinatensys: EPSG:2056")
 
-    translate_options = gdal.TranslateOptions(
+    translate_kwargs = dict(
         format="COG",
         outputSRS="EPSG:2056",
         noData=nodata_val,
         creationOptions=cog_options,
     )
+    if band_list is not None:
+        translate_kwargs["bandList"] = band_list
+    if output_type is not None:
+        translate_kwargs["outputType"]  = output_type
+        translate_kwargs["scaleParams"] = scale_params
+    translate_options = gdal.TranslateOptions(**translate_kwargs)
 
     last_emit = {"t": 0.0, "p": -1.0}
 
@@ -298,10 +350,6 @@ def _mosaic(cfg: dict) -> None:
         except Exception:
             pass
         return 1
-
-    src_ds = gdal.Open(str(vrt_path), gdal.GA_ReadOnly)
-    if src_ds is None:
-        raise RuntimeError(f"GDAL konnte das VRT nicht oeffnen: {vrt_path}")
 
     out_ds = gdal.Translate(str(out_path), src_ds, options=translate_options, callback=_progress)
     if out_ds is None:

@@ -2,7 +2,7 @@
 
 Zwei GDAL-Werkzeuge fuer Cloud-Optimized GeoTIFFs (COG), als Tabs im selben GUI:
 
-- **COGTIFF erstellen** — mosaikiert gekachelte `.tif`/`.tfw`-Dateien (z.B. 1km²-Kacheln) per VRT zu einem einzigen COGTIFF.
+- **COGTIFF erstellen** — mosaikiert gekachelte `.tif`/`.tfw`-Dateien (z.B. 1km²-Kacheln) per VRT zu einem einzigen COGTIFF, optional mit Band-Mapping und Bit-Tiefe-Konvertierung.
 - **Baender aendern** — konvertiert ein COG/GeoTIFF mit beliebiger Bandanzahl in ein neues COG mit frei konfigurierbarem Band-Mapping.
 
 ## GUI
@@ -74,11 +74,16 @@ zu einem einzigen COGTIFF. Entspricht der Pipeline `gdalbuildvrt` → `gdal_tran
 2. **Output-Ordner** waehlen — das COGTIFF wird direkt hier abgelegt, die VRT-Zwischendatei im
    automatisch angelegten Unterordner `vrt/`
 3. **Ausgabedateiname** angeben (ohne Endung)
-4. **Bit-Tiefe** des Inputs waehlen (8bit/16bit) — steuert die passenden NoData-Vorschlaege
-5. **NoData-Wert** waehlen: 8bit → `0 0 0` / `255 255 255`; 16bit → `0 0 0 0` / `65535 65535 65535`;
+4. **Band-Konfiguration** (optional) — wie im Tab "Baender aendern": Schnellauswahl-Preset oder
+   manuelle Eingabe von Input-Bandbezeichnungen und Ausgabebaendern (z.B. `RGBN → RGB`).
+   Leer gelassen = alle Baender unveraendert.
+5. **Bit-Tiefe (Output)** waehlen: `(unveraendert)`, `8bit` oder `16bit`. Die Quell-Bit-Tiefe wird
+   automatisch erkannt; bei Konvertierung wird linear skaliert (8bit ↔ 16bit).
+6. **NoData-Wert** waehlen — die Vorschlaege richten sich nach der gewaehlten Ziel-Bit-Tiefe:
+   8bit → `0 0 0` / `255 255 255`; 16bit → `0 0 0 0` / `65535 65535 65535`;
    gilt gemeinsam fuer `-srcnodata`, `-vrtnodata` und `-a_nodata`
-6. **COG-Optionen** anpassen (Kompression inkl. JPEG mit Qualitaets-Regler, Kachelgrösse, Overviews, Resampling)
-7. **COGTIFF ERSTELLEN** starten
+7. **COG-Optionen** anpassen (Kompression inkl. JPEG mit Qualitaets-Regler, Kachelgrösse, Overviews, Resampling)
+8. **COGTIFF ERSTELLEN** starten
 
 > **Koordinatensystem:** wird beim Mosaik-Tab fest auf **EPSG:2056** (LV95) gesetzt, da Kachel-TIFFs
 > mit `.tfw`-Begleitdatei i.d.R. keine CRS-Information eingebettet haben.
@@ -94,7 +99,7 @@ zu einem einzigen COGTIFF. Entspricht der Pipeline `gdalbuildvrt` → `gdal_tran
 | Kachelgrösse | `256` | Interne Kachelgrösse in Pixel (256, 512 oder 1024) |
 | Overviews | `AUTO` | Eingebettete Übersichtsebenen (COG-intern, keine .ovr-Datei) |
 | OV-Resampling | `LANCZOS` (Baender-Tab) / `AVERAGE` (Mosaik-Tab) | Interpolation für Overviews — LANCZOS empfohlen für Einzel-Luftbilder, AVERAGE fuer Mosaike |
-| NoData | auto (Baender-Tab) / Dropdown nach Bit-Tiefe (Mosaik-Tab) | Baender-Tab: aus Quelldatei erkannt, bei Alpha-Band automatisch auf 0 gesetzt |
+| NoData | auto (Baender-Tab) / Dropdown nach Ziel-Bit-Tiefe (Mosaik-Tab) | Baender-Tab: aus Quelldatei erkannt, bei Alpha-Band automatisch auf 0 gesetzt |
 
 > **Hinweis Kachelgrösse:** 256 ist der Standard für DOP-Publikation (z.B. STAC, WMTS). 512/1024 bieten bessere Kompressionsrate bei weniger HTTP-Requests, sind aber weniger kompatibel mit Standard-Tile-Clients.
 
@@ -112,6 +117,9 @@ logs/
 ```
 
 Der Ordner wird beim ersten Start automatisch erstellt.
+
+Nach Abschluss eines Vorgangs (in beiden Tabs) erscheint zusaetzlich ein Info-Fenster mit OK-Button,
+das Erfolg oder Fehlschlag bestaetigt — Details dazu stehen im Log.
 
 ---
 
