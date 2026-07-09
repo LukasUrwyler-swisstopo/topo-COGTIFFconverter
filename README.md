@@ -11,7 +11,7 @@ Drei GDAL-Werkzeuge rund um Cloud-Optimized GeoTIFFs (COG), als Tabs im selben G
 ```bash
 python 01_GUI_cogtiffConverter.py
 ```
-<img width="829" height="1342" alt="grafik" src="https://github.com/user-attachments/assets/882bfc92-4327-475e-9e70-fdc984f569be" />
+<img width="406" height="693" alt="image" src="https://github.com/user-attachments/assets/4daccc40-d0df-4ac2-b86b-d44caebb9a6d" />
 
 
 Typische Anwendungsfälle mit swisstopo-Luftbildern (DOP) fuer die Band-Konvertierung:
