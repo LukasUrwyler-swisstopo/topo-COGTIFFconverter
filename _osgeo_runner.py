@@ -4,9 +4,11 @@ Liest Parameter aus einer JSON-Datei und fuehrt GDAL-abhaengige Funktionen aus.
 Ausgabe geht auf stdout -> wird vom GUI live im Log angezeigt.
 
 Aktionen:
-    info    - Metadaten aus Quelldatei lesen, Ergebnis als JSON auf stdout
-    convert - COGTIFF Band-Konvertierung durchfuehren, Fortschritt auf stdout
-    mosaic  - Kachel-TIFFs (+ .tfw) zu VRT mosaikieren und als COGTIFF schreiben
+    info       - Metadaten aus Quelldatei lesen, Ergebnis als JSON auf stdout
+    convert    - COGTIFF Band-Konvertierung durchfuehren, Fortschritt auf stdout
+    mosaic     - Kachel-TIFFs (+ .tfw) zu VRT mosaikieren und als COGTIFF schreiben
+    to_bigtiff - COGTIFF zu klassischem (Big)TIFF + TFW konvertieren:
+                 Einzeldatei ("single") oder Kacheln via Grid-Shape ("tiles")
 """
 
 import sys
@@ -378,6 +380,218 @@ def _mosaic(cfg: dict) -> None:
     _log("Fertig.")
 
 
+def _to_bigtiff(cfg: dict) -> None:
+    """Konvertiert ein COGTIFF zu klassischem (Big)TIFF + TFW-Weltdatei.
+    Modus 'single': gesamtes Raster als eine Ausgabedatei (BIGTIFF=IF_SAFER).
+    Modus 'tiles' : Zuschnitt je Feature eines Grid-Shapes (Bounding-Box je Feature);
+                    Dateiname aus Attributfeld 'NAME' (+ optional Praefix/Suffix)."""
+    from osgeo import gdal, ogr, osr
+
+    mode       = cfg["mode"]                      # "single" | "tiles"
+    input_path = cfg["input_path"]
+    compress   = cfg.get("compress",  "NONE")
+    quality    = cfg.get("quality",   "90")
+    blocksize  = cfg.get("blocksize", "256")
+
+    def _log(msg: str) -> None:
+        print(msg, flush=True)
+
+    gdal.UseExceptions()
+    ogr.UseExceptions()
+
+    _log(f"Oeffne Quelldatei: {input_path}")
+    src_ds = gdal.Open(input_path, gdal.GA_ReadOnly)
+    if src_ds is None:
+        raise FileNotFoundError(f"GDAL konnte die Datei nicht oeffnen: {input_path}")
+
+    _log(f"  Baender gesamt : {src_ds.RasterCount}")
+    _log(f"  Aufloesung     : {src_ds.RasterXSize} x {src_ds.RasterYSize} px")
+
+    creation_options = [
+        f"COMPRESS={compress}",
+        "TILED=YES",
+        f"BLOCKXSIZE={blocksize}",
+        f"BLOCKYSIZE={blocksize}",
+        "TFW=YES",
+    ]
+    if compress.upper() == "JPEG":
+        creation_options.append(f"JPEG_QUALITY={quality}")
+    elif compress.upper() in ("LZW", "DEFLATE", "ZSTD"):
+        creation_options.append("PREDICTOR=2")
+
+    if mode == "single":
+        output_path = cfg["output_path"]
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+        _log(f"\nSchreibe BigTIFF: {output_path}")
+        _log("  Kompression   : " + compress +
+             (f" (JPEG_QUALITY={quality})" if compress.upper() == "JPEG" else ""))
+        _log(f"  Kachelgroesse : {blocksize}")
+        _log("  Koordinatensys: EPSG:2056")
+
+        translate_options = gdal.TranslateOptions(
+            format="GTiff",
+            outputSRS="EPSG:2056",
+            creationOptions=creation_options + ["BIGTIFF=IF_SAFER"],
+        )
+
+        last_emit = {"t": 0.0, "p": -1.0}
+
+        def _progress(complete, message, unknown=None):
+            try:
+                if complete is None:
+                    return 1
+                pct = float(complete)
+                now = time.time()
+                if (now - last_emit["t"]) >= 1.0 or (pct - last_emit["p"]) >= 0.005:
+                    print(f"PROGRESS:{pct:.6f}", flush=True)
+                    last_emit["t"] = now
+                    last_emit["p"] = pct
+            except Exception:
+                pass
+            return 1
+
+        out_ds = gdal.Translate(output_path, src_ds, options=translate_options, callback=_progress)
+        if out_ds is None:
+            raise RuntimeError("gdal.Translate hat None zurueckgegeben - Ausgabe fehlgeschlagen.")
+        out_ds.FlushCache()
+        out_ds = None
+        src_ds = None
+
+        size_in  = Path(input_path).stat().st_size  / (1024 ** 2)
+        size_out = Path(output_path).stat().st_size / (1024 ** 2)
+        _log("\nVerifikation:")
+        _log(f"  Dateigroesse   : {size_in:.1f} MB  ->  {size_out:.1f} MB")
+        _log("Fertig.")
+        return
+
+    # --- mode == "tiles" ---
+    output_dir      = cfg["output_dir"]
+    grid_shape_path = cfg["grid_shape_path"]
+    prefix          = (cfg.get("prefix") or "").strip()
+    suffix          = (cfg.get("suffix") or "").strip()
+    name_field      = "NAME"
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    _log(f"\nOeffne Grid-Shape: {grid_shape_path}")
+    shp_ds = ogr.Open(grid_shape_path, 0)
+    if shp_ds is None:
+        raise FileNotFoundError(f"OGR konnte das Grid-Shape nicht oeffnen: {grid_shape_path}")
+    layer = shp_ds.GetLayer()
+
+    field_idx = layer.GetLayerDefn().GetFieldIndex(name_field)
+    if field_idx < 0:
+        fields = [layer.GetLayerDefn().GetFieldDefn(i).GetName()
+                  for i in range(layer.GetLayerDefn().GetFieldCount())]
+        raise ValueError(
+            f"Grid-Shape enthaelt kein Feld '{name_field}' - vorhandene Felder: {fields}"
+        )
+
+    # Grid-Shape auf EPSG:2056 pruefen und bei Bedarf on-the-fly reprojizieren
+    target_srs = osr.SpatialReference()
+    target_srs.ImportFromEPSG(2056)
+    target_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+
+    src_layer_srs = layer.GetSpatialRef()
+    transform = None
+    if src_layer_srs is None:
+        _log(f"  WARNUNG       : Grid-Shape hat kein Koordinatensystem gesetzt - wird als EPSG:2056 angenommen.")
+    elif not src_layer_srs.IsSame(target_srs):
+        src_layer_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        transform = osr.CoordinateTransformation(src_layer_srs, target_srs)
+        _log(f"  Grid-Shape CRS : {src_layer_srs.GetName()} -> wird nach EPSG:2056 reprojiziert")
+    else:
+        _log("  Grid-Shape CRS : EPSG:2056 (passend)")
+
+    # Quell-Extent fuer Ueberlapp-Pruefung/Vorfilterung je Kachel
+    gt = src_ds.GetGeoTransform()
+    rx, ry  = src_ds.RasterXSize, src_ds.RasterYSize
+    src_minx = gt[0]
+    src_maxx = gt[0] + rx * gt[1]
+    src_maxy = gt[3]
+    src_miny = gt[3] + ry * gt[5]
+
+    # Raeumlicher Vorfilter: bei grossen Grid-Shapes (z.B. gesamte Schweiz in 1km2-Kacheln,
+    # zehntausende Features) werden so nur die mit dem Quellraster ueberlappenden Features
+    # durchlaufen, statt in Python jedes einzelne Feature des gesamten Shapes zu pruefen.
+    if transform is not None:
+        inv_transform = osr.CoordinateTransformation(target_srs, src_layer_srs)
+        xs, ys = [], []
+        for cx, cy in ((src_minx, src_miny), (src_minx, src_maxy),
+                       (src_maxx, src_miny), (src_maxx, src_maxy)):
+            px, py, _ = inv_transform.TransformPoint(cx, cy)
+            xs.append(px)
+            ys.append(py)
+        layer.SetSpatialFilterRect(min(xs), min(ys), max(xs), max(ys))
+    else:
+        layer.SetSpatialFilterRect(src_minx, src_miny, src_maxx, src_maxy)
+
+    layer.ResetReading()
+    total = layer.GetFeatureCount()
+    _log(f"\nGefundene Grid-Kacheln (ueberlappend mit Quellraster): {total}")
+    _log("Kompression        : " + compress +
+         (f" (JPEG_QUALITY={quality})" if compress.upper() == "JPEG" else ""))
+    _log(f"Kachelgroesse       : {blocksize}")
+    _log("Koordinatensys.     : EPSG:2056")
+    if prefix or suffix:
+        _log(f"Praefix/Suffix      : '{prefix}' / '{suffix}'")
+
+    written = 0
+    skipped = 0
+    for i, feature in enumerate(layer, 1):
+        name_val = feature.GetField(name_field)
+        if name_val is None or str(name_val).strip() == "":
+            _log(f"  [{i}/{total}] UEBERSPRUNGEN - Feld '{name_field}' ist leer.")
+            skipped += 1
+            continue
+        tile_name = f"{prefix}{str(name_val).strip()}{suffix}.tif"
+
+        geom = feature.GetGeometryRef()
+        if geom is None:
+            _log(f"  [{i}/{total}] UEBERSPRUNGEN ({tile_name}) - keine Geometrie.")
+            skipped += 1
+            continue
+        geom = geom.Clone()
+        if transform is not None:
+            geom.Transform(transform)
+
+        minx, maxx, miny, maxy = geom.GetEnvelope()
+
+        if maxx <= src_minx or minx >= src_maxx or maxy <= src_miny or miny >= src_maxy:
+            _log(f"  [{i}/{total}] UEBERSPRUNGEN ({tile_name}) - ausserhalb des Quellraster-Extents.")
+            skipped += 1
+            continue
+
+        out_path = str(Path(output_dir) / tile_name)
+        translate_options = gdal.TranslateOptions(
+            format="GTiff",
+            outputSRS="EPSG:2056",
+            projWin=[minx, maxy, maxx, miny],
+            creationOptions=creation_options,
+        )
+        out_ds = gdal.Translate(out_path, src_ds, options=translate_options)
+        if out_ds is None:
+            _log(f"  [{i}/{total}] FEHLER beim Schreiben von {tile_name}")
+            skipped += 1
+            continue
+        out_ds.FlushCache()
+        out_ds = None
+        written += 1
+
+        print(f"PROGRESS:{i/total:.6f}", flush=True)
+        _log(f"  [{i}/{total}] {tile_name}")
+
+    src_ds = None
+    shp_ds = None
+
+    _log(f"\nFertig. {written} Kachel(n) geschrieben, {skipped} uebersprungen.")
+    if written == 0:
+        raise RuntimeError(
+            "Keine Kachel wurde geschrieben - Grid-Shape und Quellraster pruefen (Extent/Feld 'NAME')."
+        )
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print("[FEHLER] Kein Konfigurationspfad uebergeben.", flush=True)
@@ -395,6 +609,8 @@ def main() -> None:
             _convert(cfg)
         elif action == "mosaic":
             _mosaic(cfg)
+        elif action == "to_bigtiff":
+            _to_bigtiff(cfg)
         else:
             print(f"[FEHLER] Unbekannte Aktion: '{action}'", flush=True)
             sys.exit(1)

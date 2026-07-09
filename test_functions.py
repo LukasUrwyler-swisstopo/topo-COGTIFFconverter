@@ -55,3 +55,29 @@ def test_mosaic_action_available():
         os.path.join(os.path.dirname(__file__), "_osgeo_runner.py"),
     )
     assert callable(runner_mod._mosaic)
+
+
+def test_to_bigtiff_action_available():
+    runner_mod = load_module_from_path(
+        "runner_module",
+        os.path.join(os.path.dirname(__file__), "_osgeo_runner.py"),
+    )
+    assert callable(runner_mod._to_bigtiff)
+
+
+def test_bigtiff_tab_widgets_exist():
+    gui_mod = load_module_from_path(
+        "gui_module",
+        os.path.join(os.path.dirname(__file__), "01_GUI_cogtiffConverter.py"),
+    )
+    app = gui_mod.BandKonverterApp()
+    try:
+        assert app._big_mode_var.get() == "single"
+        app._big_mode_var.set("tiles")
+        app._update_big_mode_ui()
+        assert not app._big_single_frame.grid_info()
+        app._big_mode_var.set("single")
+        app._update_big_mode_ui()
+        assert not app._big_tiles_frame.grid_info()
+    finally:
+        app.destroy()

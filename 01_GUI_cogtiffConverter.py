@@ -246,12 +246,15 @@ class BandKonverterApp(tk.Tk):
         self._notebook = ttk.Notebook(self)
         self._notebook.pack(fill="both", expand=True, padx=12, pady=6)
 
-        tab_mosaic = ttk.Frame(self._notebook)
-        tab_bands  = ttk.Frame(self._notebook)
-        self._notebook.add(tab_mosaic, text="create COGTIFF")
-        self._notebook.add(tab_bands,  text="change BANDS")
+        tab_mosaic  = ttk.Frame(self._notebook)
+        tab_bigtiff = ttk.Frame(self._notebook)
+        tab_bands   = ttk.Frame(self._notebook)
+        self._notebook.add(tab_mosaic,  text="create COGTIFF")
+        self._notebook.add(tab_bigtiff, text="cogtiff to TIFF")
+        self._notebook.add(tab_bands,   text="change BANDS")
 
         self._build_mosaic_tab(tab_mosaic)
+        self._build_bigtiff_tab(tab_bigtiff)
         self._build_bands_tab(tab_bands)
 
         # Log
@@ -339,6 +342,298 @@ class BandKonverterApp(tk.Tk):
         self._start_mosaic_btn = ttk.Button(btn_row, text="▶   COGTIFF ERSTELLEN",
                                              command=self._start_mosaic)
         self._start_mosaic_btn.pack(side="right", ipadx=22, ipady=7)
+
+    def _build_bigtiff_tab(self, parent):
+        sf = self._build_scrollable(parent, "_big_canvas", "_big_sf")
+
+        self._build_big_dateien(sf)
+        self._build_big_dateiinfo(sf)
+
+        self._build_group_header(sf, "Ausgabe")
+        self._build_big_mode(sf)
+
+        self._build_group_header(sf, "TIFF-Optionen")
+        self._build_big_options(sf)
+
+        btn_row = ttk.Frame(parent)
+        btn_row.pack(fill="x", pady=(6, 0))
+        self._start_big_btn = ttk.Button(btn_row, text="▶   KONVERTIEREN",
+                                          command=self._start_big)
+        self._start_big_btn.pack(side="right", ipadx=22, ipady=7)
+
+    def _build_big_dateien(self, parent):
+        sec = ttk.LabelFrame(parent, text="Dateien", padding=10,
+                              style="Section.TLabelframe")
+        sec.pack(fill="x", pady=(0, 6))
+        sec.columnconfigure(1, weight=1)
+
+        lbl = ttk.Label(sec, text="Input-Datei (COGTIFF):", font=("Segoe UI", 9, "bold"))
+        lbl.grid(row=0, column=0, sticky="w", pady=3)
+        self._big_in_var = tk.StringVar()
+        ttk.Entry(sec, textvariable=self._big_in_var
+                   ).grid(row=0, column=1, sticky="ew", padx=(8, 4), pady=3)
+        ttk.Button(sec, text="Datei…",
+                    command=self._browse_big_input
+                    ).grid(row=0, column=2, pady=3)
+        in_hint = ttk.Label(sec, text="COG-TIFF  (.tif / .tiff)", font=("", 8))
+        in_hint.grid(row=1, column=1, sticky="w", padx=(8, 0))
+        self._dim_labels.append(in_hint)
+
+    def _build_big_dateiinfo(self, parent):
+        sec = ttk.LabelFrame(parent, text="Datei-Info  (aus Quelldatei gelesen)",
+                              padding=10, style="Section.TLabelframe")
+        sec.pack(fill="x", pady=(0, 6))
+        sec.columnconfigure(1, weight=1)
+
+        fields = [
+            ("BANDS:",           "_big_info_bands"),
+            ("Aufloesung:",        "_big_info_res"),
+            ("Bit-Tiefe:",        "_big_info_bitdepth"),
+            ("Kompression:",       "_big_info_compression"),
+            ("Koordinatensys.:",  "_big_info_crs"),
+            ("Dateigroesse:",      "_big_info_size"),
+        ]
+        for row, (label, attr) in enumerate(fields):
+            lbl = ttk.Label(sec, text=label, font=("Segoe UI", 9, "bold"))
+            lbl.grid(row=row, column=0, sticky="w", pady=1)
+            val = ttk.Label(sec, text="–", font=("Segoe UI", 9))
+            val.grid(row=row, column=1, sticky="w", padx=(8, 0), pady=1)
+            setattr(self, attr, val)
+            self._accent_labels.append(val)
+
+        refresh_btn = ttk.Button(sec, text="Datei-Info aktualisieren",
+                                  command=self._refresh_big_info)
+        refresh_btn.grid(row=len(fields), column=0, columnspan=2,
+                          sticky="w", pady=(8, 0))
+
+    def _build_big_mode(self, parent):
+        sec = ttk.LabelFrame(parent, text="Modus", padding=10,
+                              style="Section.TLabelframe")
+        sec.pack(fill="x", pady=(0, 6))
+        sec.columnconfigure(1, weight=1)
+
+        self._big_mode_var = tk.StringVar(value="single")
+        rb1 = ttk.Radiobutton(sec, text="BigTIFF  (einzelne Datei)",
+                               variable=self._big_mode_var, value="single",
+                               command=self._update_big_mode_ui)
+        rb1.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 2))
+        rb2 = ttk.Radiobutton(sec, text="Tiled-TIFF  (Kacheln via Grid-Shape)",
+                               variable=self._big_mode_var, value="tiles",
+                               command=self._update_big_mode_ui)
+        rb2.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
+
+        crs_lbl = ttk.Label(sec, text="Output-Referenzsystem: EPSG:2056  (CH1901+ LV95)",
+                             font=("Segoe UI", 9, "bold"))
+        crs_lbl.grid(row=2, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        self._accent_labels.append(crs_lbl)
+
+        # -- Single-Datei Felder --
+        self._big_single_frame = ttk.Frame(sec)
+        self._big_single_frame.grid(row=3, column=0, columnspan=3, sticky="ew")
+        self._big_single_frame.columnconfigure(1, weight=1)
+        lbl_s = ttk.Label(self._big_single_frame, text="Output-Datei:", font=("Segoe UI", 9, "bold"))
+        lbl_s.grid(row=0, column=0, sticky="w", pady=3)
+        self._big_out_file_var = tk.StringVar()
+        ttk.Entry(self._big_single_frame, textvariable=self._big_out_file_var
+                   ).grid(row=0, column=1, sticky="ew", padx=(8, 4), pady=3)
+        ttk.Button(self._big_single_frame, text="Speichern…",
+                    command=self._browse_big_output_single
+                    ).grid(row=0, column=2, pady=3)
+        hint_s = ttk.Label(self._big_single_frame,
+                            text="GeoTIFF + .tfw (WorldFile) werden hier geschrieben",
+                            font=("", 8))
+        hint_s.grid(row=1, column=1, sticky="w", padx=(8, 0))
+        self._dim_labels.append(hint_s)
+
+        # -- Tiles Felder --
+        self._big_tiles_frame = ttk.Frame(sec)
+        self._big_tiles_frame.grid(row=3, column=0, columnspan=3, sticky="ew")
+        self._big_tiles_frame.columnconfigure(1, weight=1)
+
+        lbl_t = ttk.Label(self._big_tiles_frame, text="Output-Ordner:", font=("Segoe UI", 9, "bold"))
+        lbl_t.grid(row=0, column=0, sticky="w", pady=3)
+        self._big_out_dir_var = tk.StringVar()
+        ttk.Entry(self._big_tiles_frame, textvariable=self._big_out_dir_var
+                   ).grid(row=0, column=1, sticky="ew", padx=(8, 4), pady=3)
+        ttk.Button(self._big_tiles_frame, text="Ordner…",
+                    command=self._browse_big_output_dir
+                    ).grid(row=0, column=2, pady=3)
+        hint_t = ttk.Label(self._big_tiles_frame,
+                            text="Je Kachel wird eine GeoTIFF + .tfw (WorldFile) hier geschrieben",
+                            font=("", 8))
+        hint_t.grid(row=1, column=1, sticky="w", padx=(8, 0))
+        self._dim_labels.append(hint_t)
+
+        lbl_g = ttk.Label(self._big_tiles_frame, text="Grid-Shape (.shp):", font=("Segoe UI", 9, "bold"))
+        lbl_g.grid(row=2, column=0, sticky="w", pady=(8, 3))
+        self._big_grid_var = tk.StringVar()
+        ttk.Entry(self._big_tiles_frame, textvariable=self._big_grid_var
+                   ).grid(row=2, column=1, sticky="ew", padx=(8, 4), pady=(8, 3))
+        ttk.Button(self._big_tiles_frame, text="Datei…",
+                    command=self._browse_big_grid_shape
+                    ).grid(row=2, column=2, pady=(8, 3))
+        hint_g = ttk.Label(self._big_tiles_frame,
+                            text="Attributfeld 'NAME' liefert die Kachel-Dateinamen  |  Shape wird nach EPSG:2056 referenziert",
+                            font=("", 8))
+        hint_g.grid(row=3, column=1, sticky="w", padx=(8, 0))
+        self._dim_labels.append(hint_g)
+
+        lbl_p = ttk.Label(self._big_tiles_frame, text="Praefix / Suffix:", font=("Segoe UI", 9, "bold"))
+        lbl_p.grid(row=4, column=0, sticky="w", pady=(8, 3))
+        ps_row = ttk.Frame(self._big_tiles_frame)
+        ps_row.grid(row=4, column=1, sticky="w", padx=(8, 0), pady=(8, 3))
+        self._big_prefix_var = tk.StringVar()
+        self._big_suffix_var = tk.StringVar()
+        ttk.Entry(ps_row, textvariable=self._big_prefix_var, width=14).pack(side="left")
+        ttk.Label(ps_row, text="NAME", font=("Courier New", 9)).pack(side="left", padx=6)
+        ttk.Entry(ps_row, textvariable=self._big_suffix_var, width=14).pack(side="left")
+        hint_p = ttk.Label(self._big_tiles_frame,
+                            text="Beide optional  |  Ergebnis: <Praefix><NAME><Suffix>.tif",
+                            font=("", 8))
+        hint_p.grid(row=5, column=1, sticky="w", padx=(8, 0))
+        self._dim_labels.append(hint_p)
+
+        self._update_big_mode_ui()
+
+    def _update_big_mode_ui(self):
+        if self._big_mode_var.get() == "single":
+            self._big_tiles_frame.grid_remove()
+            self._big_single_frame.grid()
+        else:
+            self._big_single_frame.grid_remove()
+            self._big_tiles_frame.grid()
+
+    def _build_big_options(self, parent):
+        sec = ttk.LabelFrame(parent, text="TIFF-Optionen", padding=10,
+                              style="Section.TLabelframe")
+        sec.pack(fill="x", pady=(0, 6))
+        sec.columnconfigure(1, weight=0)
+        sec.columnconfigure(3, weight=0)
+
+        def _row(r, c, label, widget_cb):
+            lbl = ttk.Label(sec, text=label, font=("Segoe UI", 9, "bold"))
+            lbl.grid(row=r, column=c*2, sticky="w", pady=3, padx=(0 if c == 0 else 20, 0))
+            w = widget_cb()
+            w.grid(row=r, column=c*2+1, sticky="w", padx=(6, 0), pady=3)
+            return w
+
+        self._big_compress_var = tk.StringVar(value="NONE")
+        _row(0, 0, "Kompression:", lambda: ttk.Combobox(
+            sec, textvariable=self._big_compress_var,
+            values=["NONE", "DEFLATE", "LZW", "ZSTD", "JPEG"], state="readonly", width=10))
+
+        self._big_quality_var  = tk.StringVar(value="90")
+        self._big_quality_spin = _row(0, 1, "JPEG-Qualitaet:", lambda: tk.Spinbox(
+            sec, from_=60, to=100, textvariable=self._big_quality_var, width=6))
+
+        self._big_blocksize_var = tk.StringVar(value="256")
+        _row(1, 0, "TIFF-Blockgroesse (intern):", lambda: ttk.Combobox(
+            sec, textvariable=self._big_blocksize_var,
+            values=["256", "512", "1024"], state="readonly", width=8))
+
+        hint = ttk.Label(sec,
+            text="TIFF-Blockgroesse = interne Pixel-Bloecke fuer performantes Lesen, NICHT die geografische Kachelgroesse "
+                 "(diese kommt bei 'Tiled-TIFF' vollstaendig aus dem Grid-Shape)  |  Standard: keine Kompression (NONE)  |  "
+                 "BIGTIFF wird bei Einzeldatei automatisch bei Bedarf gesetzt (IF_SAFER)",
+            font=("", 8), wraplength=560, justify="left")
+        hint.grid(row=2, column=0, columnspan=4, sticky="w", pady=(6, 0))
+        self._dim_labels.append(hint)
+
+        self._big_compress_var.trace_add("write", lambda *_: self._update_big_quality_state())
+        self._update_big_quality_state()
+
+    def _update_big_quality_state(self):
+        state = "normal" if self._big_compress_var.get().upper() == "JPEG" else "disabled"
+        try:
+            self._big_quality_spin.config(state=state)
+        except Exception:
+            pass
+
+    def _browse_big_input(self):
+        path = filedialog.askopenfilename(
+            title="Input-COGTIFF auswaehlen",
+            filetypes=[("GeoTIFF", "*.tif *.tiff"), ("Alle Dateien", "*.*")],
+        )
+        if path:
+            path = path.replace("/", "\\")
+            self._big_in_var.set(path)
+            p = Path(path)
+            if not self._big_out_file_var.get().strip():
+                self._big_out_file_var.set(str(p.parent / (p.stem + "_bigtiff.tif")))
+            if not self._big_out_dir_var.get().strip():
+                self._big_out_dir_var.set(str(p.parent / "tiles"))
+            self._clear_log()
+            self._refresh_big_info()
+
+    def _browse_big_output_single(self):
+        init = self._big_out_file_var.get() or self._big_in_var.get()
+        p    = Path(init) if init else Path.home()
+        path = filedialog.asksaveasfilename(
+            title="BigTIFF speichern unter",
+            initialdir=str(p.parent),
+            initialfile=p.name,
+            defaultextension=".tif",
+            filetypes=[("GeoTIFF", "*.tif *.tiff"), ("Alle Dateien", "*.*")],
+        )
+        if path:
+            self._big_out_file_var.set(path.replace("/", "\\"))
+
+    def _browse_big_output_dir(self):
+        path = filedialog.askdirectory(title="Output-Ordner (Kacheln) auswaehlen")
+        if path:
+            self._big_out_dir_var.set(path.replace("/", "\\"))
+
+    def _browse_big_grid_shape(self):
+        path = filedialog.askopenfilename(
+            title="Grid-Shape auswaehlen",
+            filetypes=[("Shapefile", "*.shp"), ("Alle Dateien", "*.*")],
+        )
+        if path:
+            self._big_grid_var.set(path.replace("/", "\\"))
+
+    def _refresh_big_info(self):
+        src = self._big_in_var.get().strip()
+        info_attrs = ("_big_info_bands", "_big_info_res", "_big_info_bitdepth",
+                      "_big_info_compression", "_big_info_crs", "_big_info_size")
+
+        def _reset():
+            for attr in info_attrs:
+                getattr(self, attr).config(text="–")
+
+        if not src or not os.path.isfile(src):
+            _reset()
+            return
+
+        if not self._osgeo_python or not os.path.isfile(self._osgeo_python):
+            self._big_info_bands.config(text="OSGeo4W Python nicht gefunden – bitte Pfad setzen")
+            return
+
+        def ui_error(msg):
+            try:
+                from tkinter import messagebox
+                messagebox.showerror("Datei-Info Fehler", msg, parent=self)
+            except Exception:
+                pass
+            _reset()
+
+        def ui_info(info):
+            try:
+                self._big_info_bands.config(text=str(info.get("bands")))
+                self._big_info_res.config(text="{} × {} px".format(info.get('width'), info.get('height')))
+                self._big_info_bitdepth.config(text=_format_bitdepth(info))
+                comp   = info.get("compression", "–")
+                layout = info.get("layout", "")
+                self._big_info_compression.config(
+                    text="{}  |  {}".format(comp, layout) if layout else comp)
+                self._big_info_crs.config(text=info.get("crs", "–"))
+                try:
+                    self._big_info_size.config(text="{:.1f} MB".format(info.get('size_mb', 0.0)))
+                except Exception:
+                    pass
+            except Exception:
+                ui_error("Fehler beim Darstellen der Datei-Info")
+
+        self._fetch_file_info_async(src, ui_info, ui_error)
 
     def _build_group_header(self, parent, text):
         """Visueller Zwischentitel, um Einstellungen thematisch zu gruppieren (z.B. Input-/Output-Parameter)."""
@@ -847,6 +1142,8 @@ class BandKonverterApp(tk.Tk):
                 return getattr(self, "_canvas", None)
             if w in (getattr(self, "_mosaic_canvas", None), getattr(self, "_mosaic_sf", None)):
                 return getattr(self, "_mosaic_canvas", None)
+            if w in (getattr(self, "_big_canvas", None), getattr(self, "_big_sf", None)):
+                return getattr(self, "_big_canvas", None)
             w = w.master
         return None
 
@@ -1564,6 +1861,119 @@ class BandKonverterApp(tk.Tk):
             "output_bitdepth":      bitdepth,
         }
         self._run_osgeo_subprocess(cfg, name)
+
+    # ── to BIGTIFF: Validierung & Start ───────────────────────────────────────
+    def _validate_big(self):
+        errors = []
+        inp  = self._big_in_var.get().strip()
+        mode = self._big_mode_var.get()
+
+        if not self._osgeo_python or not os.path.isfile(self._osgeo_python):
+            errors.append(
+                "OSGeo4W Python nicht gefunden.\n"
+                "Bitte Pfad via 'Aendern…' festlegen  (z.B. C:\\OSGeo4W\\bin\\python3.exe)."
+            )
+
+        if not inp:
+            errors.append("Input-Datei fehlt.")
+        elif not os.path.isfile(inp):
+            errors.append(f"Input-Datei nicht gefunden:\n  {inp}")
+
+        out_file = self._big_out_file_var.get().strip()
+        out_dir  = self._big_out_dir_var.get().strip()
+        grid     = self._big_grid_var.get().strip()
+
+        if mode == "single":
+            if not out_file:
+                errors.append("Output-Datei fehlt.")
+        else:
+            if not out_dir:
+                errors.append("Output-Ordner fehlt.")
+            if not grid:
+                errors.append("Grid-Shape fehlt.")
+            elif not os.path.isfile(grid):
+                errors.append(f"Grid-Shape nicht gefunden:\n  {grid}")
+
+        if errors:
+            from tkinter import messagebox
+            messagebox.showerror("Eingabe-Fehler",
+                                  "\n\n".join(f"• {e}" for e in errors), parent=self)
+            return False
+        return True
+
+    def _start_big(self):
+        if self._running:
+            return
+        if not self._validate_big():
+            return
+
+        mode      = self._big_mode_var.get()
+        inp       = self._big_in_var.get().strip()
+        out_file  = self._big_out_file_var.get().strip()
+        out_dir   = self._big_out_dir_var.get().strip()
+        grid      = self._big_grid_var.get().strip()
+        prefix    = self._big_prefix_var.get()
+        suffix    = self._big_suffix_var.get()
+        compress  = self._big_compress_var.get()
+        quality   = self._big_quality_var.get()
+        block     = self._big_blocksize_var.get()
+
+        self._running = True
+        self._start_big_btn.config(state="disabled")
+        self._progress_frame.pack(fill="x", padx=12, pady=(0, 4), before=self._btn_row)
+        self._progress_bar.start(10)
+        self._clear_log()
+        self._log("=== COGTIFF zu BIGTIFF/Tiled-TIFF gestartet ===\n\n")
+
+        threading.Thread(
+            target=self._run_big_thread,
+            args=(mode, inp, out_file, out_dir, grid, prefix, suffix, compress, quality, block),
+            daemon=True,
+        ).start()
+
+    def _run_big_thread(self, mode, inp, out_file, out_dir, grid, prefix, suffix,
+                         compress, quality, block):
+        try:
+            self._exec_big_with_osgeo(mode, inp, out_file, out_dir, grid, prefix, suffix,
+                                       compress, quality, block)
+            self.after(0, self._on_done_big, True)
+        except Exception as e:
+            self._log_q.put(f"\n[FEHLER] {e}\n")
+            self._log_q.put(traceback.format_exc())
+            self.after(0, self._on_done_big, False)
+
+    def _exec_big_with_osgeo(self, mode, inp, out_file, out_dir, grid, prefix, suffix,
+                              compress, quality, block):
+        """Startet _osgeo_runner.py (Aktion 'to_bigtiff') als Subprocess mit OSGeo4W Python."""
+        cfg = {
+            "action":          "to_bigtiff",
+            "mode":            mode,
+            "input_path":      inp,
+            "compress":        compress,
+            "quality":         quality,
+            "blocksize":       block,
+        }
+        if mode == "single":
+            cfg["output_path"] = out_file
+            log_stem = Path(out_file).stem
+        else:
+            cfg["output_dir"]      = out_dir
+            cfg["grid_shape_path"] = grid
+            cfg["prefix"]          = prefix
+            cfg["suffix"]          = suffix
+            log_stem = Path(inp).stem + "_tiles"
+        self._run_osgeo_subprocess(cfg, log_stem)
+
+    def _on_done_big(self, success: bool):
+        self._running = False
+        self._start_big_btn.config(state="normal")
+        self._progress_bar.stop()
+        self._progress_frame.pack_forget()
+        if success:
+            self._log("\n✔  Konvertierung erfolgreich abgeschlossen.\n")
+        else:
+            self._log("\n✘  Konvertierung fehlgeschlagen.\n")
+        self._show_done_popup(success, "BIGTIFF/Tiled-TIFF-Konvertierung")
 
     # ── Gemeinsame Subprocess-Ausfuehrung (convert & mosaic) ──────────────────
     def _run_osgeo_subprocess(self, cfg: dict, log_stem: str) -> None:

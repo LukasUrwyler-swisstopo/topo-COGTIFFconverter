@@ -1,8 +1,9 @@
 # COGTIFF Werkzeuge
 
-Zwei GDAL-Werkzeuge fuer Cloud-Optimized GeoTIFFs (COG), als Tabs im selben GUI:
+Drei GDAL-Werkzeuge rund um Cloud-Optimized GeoTIFFs (COG), als Tabs im selben GUI:
 
 - **COGTIFF erstellen** — mosaikiert gekachelte `.tif`/`.tfw`-Dateien (z.B. 1km²-Kacheln) per VRT zu einem einzigen COGTIFF, optional mit Band-Mapping und Bit-Tiefe-Konvertierung.
+- **cogtiff to TIFF** — konvertiert ein COGTIFF zu klassischem (Big)TIFF + `.tfw`-Weltdatei: entweder als einzelne Datei, oder als Kachel-Set gemaess Grid-Shape (Dateiname je Kachel aus Attributfeld `NAME`).
 - **Baender aendern** — konvertiert ein COG/GeoTIFF mit beliebiger Bandanzahl in ein neues COG mit frei konfigurierbarem Band-Mapping.
 
 ## GUI
@@ -90,6 +91,37 @@ zu einem einzigen COGTIFF. Entspricht der Pipeline `gdalbuildvrt` → `gdal_tran
 
 ---
 
+## Bedienung — Tab "cogtiff to TIFF"
+
+Konvertiert ein COGTIFF zu klassischem (Big)TIFF + `.tfw`-Weltdatei (kein Cloud-Optimized-Layout).
+Zwei Modi zur Auswahl:
+
+- **BigTIFF (einzelne Datei)** — das gesamte Raster als eine Ausgabedatei. `BIGTIFF=IF_SAFER`:
+  GDAL wechselt nur bei Bedarf (Datei nahe der 4GB-Grenze) automatisch ins BigTIFF-Format.
+- **Tiled-TIFF (Kacheln via Grid-Shape)** — schneidet das Raster anhand eines Grid-Shapes
+  (Bounding-Box je Feature) in einzelne Kachel-Dateien:
+  1. **Grid-Shape (.shp)** waehlen — Attributfeld **`NAME`** liefert den Dateinamen je Kachel
+     (`<Praefix><NAME><Suffix>.tif`, Praefix/Suffix optional)
+  2. Das Shape wird bei Bedarf automatisch nach **EPSG:2056** reprojiziert (CRS-Pruefung anhand
+     des Shape-eigenen `.prj`)
+  3. Ein raeumlicher Vorfilter (`SetSpatialFilterRect`) sorgt dafuer, dass bei grossen Grids
+     (z.B. gesamte Schweiz in 1km²-Kacheln, zehntausende Features) nur die tatsaechlich mit dem
+     Quellraster ueberlappenden Kacheln verarbeitet werden — die geografische Kachelgroesse kommt
+     dabei vollstaendig aus der Geometrie des Grid-Shapes, nicht aus einer GUI-Einstellung
+  4. Kacheln ohne Ueberlappung zum Quellraster werden uebersprungen, nicht als Fehler behandelt
+
+**Fixparameter:** Output-Koordinatensystem stets **EPSG:2056** (CH1901+ LV95).
+
+**TIFF-Optionen:**
+
+| Option | Standard | Beschreibung |
+|--------|----------|-------------|
+| Kompression | `NONE` | `NONE`/`DEFLATE`/`LZW`/`ZSTD`/`JPEG` |
+| JPEG-Qualitaet | `90` | Nur relevant bei Kompression=JPEG |
+| TIFF-Blockgroesse (intern) | `256` | Interne Pixel-Bloecke fuer performantes Lesen (256/512/1024) — **nicht** die geografische Kachelgroesse der Ausgabedateien |
+
+---
+
 ## COG-Optionen
 
 | Option | Standard | Beschreibung |
@@ -118,7 +150,7 @@ logs/
 
 Der Ordner wird beim ersten Start automatisch erstellt.
 
-Nach Abschluss eines Vorgangs (in beiden Tabs) erscheint zusaetzlich ein Info-Fenster mit OK-Button,
+Nach Abschluss eines Vorgangs (in allen drei Tabs) erscheint zusaetzlich ein Info-Fenster mit OK-Button,
 das Erfolg oder Fehlschlag bestaetigt — Details dazu stehen im Log.
 
 ---
@@ -127,6 +159,7 @@ das Erfolg oder Fehlschlag bestaetigt — Details dazu stehen im Log.
 
 - **Baender aendern:** Das Koordinatensystem wird aus der Quelldatei übernommen und unverändert in die Ausgabedatei geschrieben.
 - **COGTIFF erstellen (Mosaik):** Wird fest auf **EPSG:2056** (LV95) gesetzt, da Kachel-TIFFs mit `.tfw`-Begleitdatei i.d.R. keine CRS-Information eingebettet haben.
+- **cogtiff to TIFF:** Wird fest auf **EPSG:2056** (LV95) gesetzt; ein optionales Grid-Shape (Tiled-TIFF-Modus) wird bei abweichendem CRS automatisch reprojiziert.
 
 Für swisstopo-Daten massgebend: **EPSG:2056** (LV95 / LHN95).
 
@@ -152,7 +185,7 @@ Konfiguration direkt im Script-Kopf anpassen (`INPUT_PATH`, `OUTPUT_PATH`, `OUTP
         │  JSON-Config (tempfile)
         ▼
 _osgeo_runner.py                (OSGeo4W Python, GDAL)
-    Aktionen: info / convert / mosaic
+    Aktionen: info / convert / mosaic / to_bigtiff
         │
         │  stdout → live ins GUI-Log + Logdatei
         ▼
