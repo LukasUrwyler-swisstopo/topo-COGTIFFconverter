@@ -110,6 +110,10 @@ Zwei Modi zur Auswahl:
      Quellraster ueberlappenden Kacheln verarbeitet werden — die geografische Kachelgroesse kommt
      dabei vollstaendig aus der Geometrie des Grid-Shapes, nicht aus einer GUI-Einstellung
   4. Kacheln ohne Ueberlappung zum Quellraster werden uebersprungen, nicht als Fehler behandelt
+  5. Kacheln, die nach dem Zuschnitt zu **100% aus einem konstanten Wert** bestehen (reine
+     Hintergrund-/NoData-Flaeche ausserhalb der eigentlichen Bildkontur, z.B. bei unregelmaessig
+     geformten Befliegungsgebieten innerhalb eines rechteckigen Grids), werden automatisch wieder
+     geloescht (`.tif` + `.tfw` + ggf. `.aux.xml`) — die Anzahl erscheint am Ende im Log
 
 **Fixparameter:** Output-Koordinatensystem stets **EPSG:2056** (CH1901+ LV95).
 

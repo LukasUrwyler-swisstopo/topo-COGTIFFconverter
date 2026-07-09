@@ -380,6 +380,32 @@ def _mosaic(cfg: dict) -> None:
     _log("Fertig.")
 
 
+def _tile_is_empty(ds) -> bool:
+    """Prueft, ob eine Kachel keine verwertbaren Bildinformationen enthaelt:
+    alle Baender bestehen aus genau einem konstanten Wert (z.B. reine
+    Hintergrund-/NoData-Flaeche ausserhalb der eigentlichen Bildkontur).
+    Echte Luftbild-Kacheln weisen praktisch nie eine perfekt konstante
+    Pixelmatrix auf - dieser Test kommt daher ohne Kenntnis des exakten
+    NoData-Werts aus."""
+    for i in range(1, ds.RasterCount + 1):
+        band = ds.GetRasterBand(i)
+        bmin, bmax = band.ComputeRasterMinMax(0)  # approx_ok=0: exakt
+        if bmin != bmax:
+            return False
+    return True
+
+
+def _delete_tile_files(tif_path: str) -> None:
+    """Loescht eine Kachel-TIFF samt Begleitdateien (.tfw, .aux.xml)."""
+    p = Path(tif_path)
+    for candidate in (p, p.with_suffix(".tfw"), Path(str(p) + ".aux.xml")):
+        try:
+            if candidate.exists():
+                candidate.unlink()
+        except OSError:
+            pass
+
+
 def _to_bigtiff(cfg: dict) -> None:
     """Konvertiert ein COGTIFF zu klassischem (Big)TIFF + TFW-Weltdatei.
     Modus 'single': gesamtes Raster als eine Ausgabedatei (BIGTIFF=IF_SAFER).
@@ -537,8 +563,9 @@ def _to_bigtiff(cfg: dict) -> None:
     if prefix or suffix:
         _log(f"Praefix/Suffix      : '{prefix}' / '{suffix}'")
 
-    written = 0
-    skipped = 0
+    written      = 0
+    skipped      = 0
+    empty_deleted = 0
     for i, feature in enumerate(layer, 1):
         name_val = feature.GetField(name_field)
         if name_val is None or str(name_val).strip() == "":
@@ -576,6 +603,15 @@ def _to_bigtiff(cfg: dict) -> None:
             skipped += 1
             continue
         out_ds.FlushCache()
+
+        if _tile_is_empty(out_ds):
+            out_ds = None
+            _delete_tile_files(out_path)
+            empty_deleted += 1
+            print(f"PROGRESS:{i/total:.6f}", flush=True)
+            _log(f"  [{i}/{total}] {tile_name} - GELOESCHT (100% NoData/Hintergrund)")
+            continue
+
         out_ds = None
         written += 1
 
@@ -585,7 +621,8 @@ def _to_bigtiff(cfg: dict) -> None:
     src_ds = None
     shp_ds = None
 
-    _log(f"\nFertig. {written} Kachel(n) geschrieben, {skipped} uebersprungen.")
+    _log(f"\nFertig. {written} Kachel(n) geschrieben, {skipped} uebersprungen, "
+         f"{empty_deleted} leere Kachel(n) (100% NoData) nachtraeglich geloescht.")
     if written == 0:
         raise RuntimeError(
             "Keine Kachel wurde geschrieben - Grid-Shape und Quellraster pruefen (Extent/Feld 'NAME')."
