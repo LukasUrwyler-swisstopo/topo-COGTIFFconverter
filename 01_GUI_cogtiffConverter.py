@@ -1363,6 +1363,10 @@ class BandKonverterApp(tk.Tk):
                     tmp_name = tmp.name
                 env = os.environ.copy()
                 env["PYTHONHOME"] = _detect_python_home(self._osgeo_python)
+                # Per-User site-packages ausschliessen: verhindert, dass ein dort
+                # separat installiertes NumPy die zur QGIS-gdal_array passende
+                # NumPy-Version verdeckt (NumPy 1.x/2.x ABI-Konflikt).
+                env["PYTHONNOUSERSITE"] = "1"
                 result = subprocess.run([self._osgeo_python, RUNNER_SCRIPT, tmp_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, env=env)
                 try:
                     if tmp_name and os.path.exists(tmp_name):
@@ -1990,6 +1994,10 @@ class BandKonverterApp(tk.Tk):
         try:
             env = os.environ.copy()
             env["PYTHONHOME"] = _detect_python_home(self._osgeo_python)
+            # Per-User site-packages ausschliessen: verhindert, dass ein dort
+            # separat installiertes NumPy die zur QGIS-gdal_array passende
+            # NumPy-Version verdeckt (NumPy 1.x/2.x ABI-Konflikt).
+            env["PYTHONNOUSERSITE"] = "1"
             # Ensure subprocess prints UTF-8 so Windows cp1252 won't raise on special chars
             env["PYTHONIOENCODING"] = "utf-8"
             header = f"[Subprocess] {self._osgeo_python}\n\n"

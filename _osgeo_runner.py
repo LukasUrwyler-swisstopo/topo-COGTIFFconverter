@@ -389,7 +389,12 @@ def _tile_is_empty(ds) -> bool:
     NoData-Werts aus."""
     for i in range(1, ds.RasterCount + 1):
         band = ds.GetRasterBand(i)
-        bmin, bmax = band.ComputeRasterMinMax(0)  # approx_ok=0: exakt
+        try:
+            bmin, bmax = band.ComputeRasterMinMax(0)  # approx_ok=0: exakt
+        except RuntimeError:
+            # Kein einziges gueltiges Pixel im Sampling (z.B. Band komplett
+            # NoData) -> Kachel gilt als leer.
+            continue
         if bmin != bmax:
             return False
     return True
