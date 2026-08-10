@@ -977,11 +977,11 @@ class BandKonverterApp(tk.Tk):
             setattr(self, attr, val)
             self._accent_labels.append(val)
 
-        # Alpha-Warnung (anfangs versteckt)
+        # Alpha-Hinweis (anfangs versteckt)
         self._warn_alpha = ttk.Label(
             sec,
-            text="⚠  NoData-Wert '0 0 0' oder '255 255 255'; pruefen"
-                 "  NoData '0 0 0' wird automatisch gesetzt. Allenfalls unter COG-Optionen anpassen.",
+            text="ℹ  Alpha-Kanal erkannt — '4. Kanal ist' wurde auf 'Alpha' gesetzt; "
+                 "die Transparenz wird automatisch als interne Maske uebernommen.",
             font=("Segoe UI", 8, "italic"), wraplength=560, justify="left",
         )
         self._warn_alpha.grid(row=len(fields), column=0, columnspan=2,
@@ -1024,25 +1024,41 @@ class BandKonverterApp(tk.Tk):
         h1.grid(row=2, column=1, sticky="w", padx=(8, 0))
         self._dim_labels.append(h1)
 
+        # 4. Kanal: NIR oder Alpha
+        lbl4 = ttk.Label(sec, text="4. Kanal ist:", font=("Segoe UI", 9, "bold"))
+        lbl4.grid(row=3, column=0, sticky="w", pady=(8, 3))
+        self._current_alpha_band = None
+        self._band4_mode_var = tk.StringVar(value="NIR")
+        band4_combo = ttk.Combobox(sec, textvariable=self._band4_mode_var,
+                                    values=["NIR", "Alpha"], state="readonly", width=10)
+        band4_combo.grid(row=3, column=1, sticky="w", padx=(8, 0), pady=(8, 3))
+        band4_combo.bind("<<ComboboxSelected>>", lambda _: self._on_band4_mode_change())
+        h4 = ttk.Label(sec,
+            text="NIR: Baender frei waehlbar, Maske aus NoData-Wert  |  "
+                 "Alpha: nur RGB (1-3), Maske direkt aus Band 4 uebernommen",
+            font=("", 8))
+        h4.grid(row=4, column=1, sticky="w", padx=(8, 0))
+        self._dim_labels.append(h4)
+
         # Ausgabebaender
         lbl2 = ttk.Label(sec, text="Ausgabebaender (Quellindizes):", font=("Segoe UI", 9, "bold"))
-        lbl2.grid(row=3, column=0, sticky="w", pady=(8, 3))
+        lbl2.grid(row=5, column=0, sticky="w", pady=(8, 3))
         self._bands_var = tk.StringVar(value="1, 2, 3")
-        entry = ttk.Entry(sec, textvariable=self._bands_var, width=20)
-        entry.grid(row=3, column=1, sticky="w", padx=(8, 0), pady=(8, 3))
-        entry.bind("<KeyRelease>", lambda _: self._update_preview())
+        self._bands_entry = ttk.Entry(sec, textvariable=self._bands_var, width=20)
+        self._bands_entry.grid(row=5, column=1, sticky="w", padx=(8, 0), pady=(8, 3))
+        self._bands_entry.bind("<KeyRelease>", lambda _: self._update_preview())
         h2 = ttk.Label(sec,
             text="1-basierte Quellband-Indizes, kommagetrennt  (z.B.  1, 2, 3  oder  4, 1, 2)",
             font=("", 8))
-        h2.grid(row=4, column=1, sticky="w", padx=(8, 0))
+        h2.grid(row=6, column=1, sticky="w", padx=(8, 0))
         self._dim_labels.append(h2)
 
         # Vorschau
         lbl3 = ttk.Label(sec, text="Band-Mapping Vorschau:", font=("Segoe UI", 9, "bold"))
-        lbl3.grid(row=5, column=0, sticky="nw", pady=(10, 3))
+        lbl3.grid(row=7, column=0, sticky="nw", pady=(10, 3))
         self._preview_lbl = ttk.Label(sec, text="–", font=("Courier New", 9),
                                        justify="left", wraplength=500)
-        self._preview_lbl.grid(row=5, column=1, sticky="w", padx=(8, 0), pady=(10, 3))
+        self._preview_lbl.grid(row=7, column=1, sticky="w", padx=(8, 0), pady=(10, 3))
         self._accent_labels.append(self._preview_lbl)
 
         self._labels_var.trace_add("write", lambda *_: self._update_preview())
@@ -1088,19 +1104,23 @@ class BandKonverterApp(tk.Tk):
             values=["AVERAGE", "LANCZOS", "BILINEAR", "CUBIC", "NEAREST"],
             state="readonly", width=10))
 
-        # NoData
-        nd_lbl = ttk.Label(sec, text="NoData-Wert:", font=("Segoe UI", 9, "bold"))
-        nd_lbl.grid(row=3, column=0, sticky="w", pady=(8, 3))
-        nd_row = ttk.Frame(sec)
-        nd_row.grid(row=3, column=1, columnspan=3, sticky="w", padx=(6, 0), pady=(8, 3))
-        self._nodata_var = tk.StringVar(value="")
-        ttk.Entry(nd_row, textvariable=self._nodata_var, width=12).pack(side="left")
-        self._nodata_status_lbl = ttk.Label(nd_row, text="", font=("Segoe UI", 8, "italic"))
-        self._nodata_status_lbl.pack(side="left", padx=(8, 0))
-        nd_hint = ttk.Label(sec,
-            text='Leer = kein NoData  |  wird beim Oeffnen der Quelldatei automatisch erkannt',
-            font=("", 8))
-        nd_hint.grid(row=4, column=0, columnspan=4, sticky="w")
+        # NoData (nur relevant im 4. Kanal-Modus "NIR" -> steuert die Maskenberechnung)
+        self._nodata_section = ttk.Frame(sec)
+        self._nodata_section.grid(row=3, column=0, columnspan=4, sticky="w", pady=(8, 3))
+
+        nd_lbl = ttk.Label(self._nodata_section, text="NoData-Wert (Maske):", font=("Segoe UI", 9, "bold"))
+        nd_lbl.grid(row=0, column=0, sticky="w")
+        self._nodata_var = tk.StringVar(value="0")
+        ttk.Combobox(self._nodata_section, textvariable=self._nodata_var,
+                     values=["0", "255"], state="readonly", width=6
+                     ).grid(row=0, column=1, sticky="w", padx=(8, 8))
+        self._nodata_status_lbl = ttk.Label(self._nodata_section, text="", font=("Segoe UI", 8, "italic"))
+        self._nodata_status_lbl.grid(row=0, column=2, sticky="w")
+        nd_hint = ttk.Label(self._nodata_section,
+            text="Pixel gilt als ungueltig (Maske=0), wenn ALLE Ausgabebaender diesem Wert entsprechen "
+                 "(z.B. schwarzer/weisser Bildrand)",
+            font=("", 8), wraplength=560, justify="left")
+        nd_hint.grid(row=1, column=0, columnspan=3, sticky="w")
         self._dim_labels.append(nd_hint)
 
         hint = ttk.Label(sec,
@@ -1154,6 +1174,34 @@ class BandKonverterApp(tk.Tk):
 
     def _update_preview(self):
         self._update_preview_generic(self._labels_var, self._bands_var, self._preview_lbl)
+
+    def _on_band4_mode_change(self):
+        """Reagiert auf Wechsel des '4. Kanal'-Dropdowns (NIR/Alpha) im Baender-Tab:
+        Bei Alpha wird die Bandauswahl auf die 3 Nicht-Alpha-Baender fixiert und gesperrt,
+        die Maske kommt direkt aus dem Alpha-Band statt aus dem NoData-Dropdown."""
+        mode = self._band4_mode_var.get()
+        if mode == "Alpha":
+            alpha_idx = self._current_alpha_band or 4
+            non_alpha = [i for i in range(1, 5) if i != alpha_idx]
+            self._bands_var.set(", ".join(str(b) for b in non_alpha))
+            try:
+                self._bands_entry.config(state="disabled")
+            except Exception:
+                pass
+            try:
+                self._nodata_section.grid_remove()
+            except Exception:
+                pass
+        else:
+            try:
+                self._bands_entry.config(state="normal")
+            except Exception:
+                pass
+            try:
+                self._nodata_section.grid()
+            except Exception:
+                pass
+        self._update_preview()
 
     # ── Generische Preset-/Vorschau-Logik (Bandkonfiguration, mehrfach genutzt) ─
     def _apply_preset_generic(self, labels_var, bands_var, preview_update,
@@ -1246,6 +1294,7 @@ class BandKonverterApp(tk.Tk):
                 getattr(self, attr).config(text="–")
             self._warn_alpha.grid_remove()
             self._compress_hint_lbl.grid_remove()
+            self._current_alpha_band = None
             return
 
         if not self._osgeo_python or not os.path.isfile(self._osgeo_python):
@@ -1272,6 +1321,7 @@ class BandKonverterApp(tk.Tk):
                 self._compress_hint_lbl.grid_remove()
             except Exception:
                 pass
+            self._current_alpha_band = None
 
         def ui_info(info):
             try:
@@ -1316,18 +1366,23 @@ class BandKonverterApp(tk.Tk):
                     pass
 
                 T = DARK if self._dark else LIGHT
+
+                # 4. Kanal-Modus anhand ColorInterp vorwaehlen (Alpha erkannt -> "Alpha", sonst "NIR")
+                self._current_alpha_band = alpha_bands[0] if alpha_bands else None
+                self._band4_mode_var.set("Alpha" if alpha_bands else "NIR")
+                self._on_band4_mode_change()
+
                 if nd_raw is not None:
                     try:
                         nd_val = float(nd_raw)
-                        nd_str = str(int(nd_val)) if nd_val == int(nd_val) else str(nd_val)
-                        self._nodata_var.set(nd_str)
-                        self._nodata_status_lbl.config(text="✔ aus Quelldatei erkannt ({})".format(nd_str), foreground=T["ok"])
-                    except Exception:
-                        pass
-                elif alpha_bands:
-                    try:
-                        self._nodata_var.set("0")
-                        self._nodata_status_lbl.config(text="⚠ Background Pixel → 0 (default 0 0 0): Pruefen welche Background-Pixel das Input-COG enthaelt", foreground=T["hint"])
+                        if nd_val in (0.0, 255.0):
+                            self._nodata_var.set(str(int(nd_val)))
+                            self._nodata_status_lbl.config(
+                                text="✔ aus Quelldatei erkannt ({})".format(int(nd_val)), foreground=T["ok"])
+                        else:
+                            self._nodata_status_lbl.config(
+                                text="⚠ Datei-NoData ({}) passt zu keiner Dropdown-Option — bitte pruefen".format(nd_raw),
+                                foreground=T["hint"])
                     except Exception:
                         pass
                 else:
@@ -1698,6 +1753,9 @@ class BandKonverterApp(tk.Tk):
             bands = []
             errors.append("Ausgabebaender ungueltig  (kommagetrennte Ganzzahlen erwartet, z.B.  1, 2, 3).")
 
+        if self._band4_mode_var.get() == "Alpha" and not self._current_alpha_band:
+            errors.append("Kein Alpha-Band erkannt — 'Datei-Info aktualisieren' anklicken oder 'NIR' waehlen.")
+
         if errors:
             from tkinter import messagebox
             messagebox.showerror("Eingabe-Fehler",
@@ -1713,13 +1771,15 @@ class BandKonverterApp(tk.Tk):
         if not ok:
             return
 
-        out      = self._out_var.get().strip()
-        compress = self._compress_var.get()
-        quality  = self._quality_var.get()
-        block    = self._blocksize_var.get()
-        ovr      = self._overviews_var.get()
-        resamp   = self._resampling_var.get()
-        nodata   = self._nodata_var.get().strip()
+        out       = self._out_var.get().strip()
+        compress  = self._compress_var.get()
+        quality   = self._quality_var.get()
+        block     = self._blocksize_var.get()
+        ovr       = self._overviews_var.get()
+        resamp    = self._resampling_var.get()
+        band4     = "alpha" if self._band4_mode_var.get() == "Alpha" else "nir"
+        alpha_bd  = self._current_alpha_band if band4 == "alpha" else None
+        mask_nd   = self._nodata_var.get().strip()
 
         self._running = True
         self._start_btn.config(state="disabled")
@@ -1730,15 +1790,16 @@ class BandKonverterApp(tk.Tk):
 
         threading.Thread(
             target=self._run_thread,
-            args=(inp, out, bands, labels, compress, quality, block, ovr, resamp, nodata),
+            args=(inp, out, bands, labels, compress, quality, block, ovr, resamp,
+                  band4, alpha_bd, mask_nd),
             daemon=True,
         ).start()
 
     def _run_thread(self, inp, out, bands, labels,
-                    compress, quality, block, ovr, resamp, nodata):
+                    compress, quality, block, ovr, resamp, band4, alpha_bd, mask_nd):
         try:
             self._exec_with_osgeo(inp, out, bands, labels,
-                                   compress, quality, block, ovr, resamp, nodata)
+                                   compress, quality, block, ovr, resamp, band4, alpha_bd, mask_nd)
             self.after(0, self._on_done, True)
         except Exception as e:
             self._log_q.put(f"\n[FEHLER] {e}\n")
@@ -1746,7 +1807,7 @@ class BandKonverterApp(tk.Tk):
             self.after(0, self._on_done, False)
 
     def _exec_with_osgeo(self, inp, out, bands, labels,
-                          compress, quality, block, ovr, resamp, nodata):
+                          compress, quality, block, ovr, resamp, band4, alpha_bd, mask_nd):
         """Startet _osgeo_runner.py (Aktion 'convert') als Subprocess mit OSGeo4W Python."""
         cfg = {
             "action":               "convert",
@@ -1759,7 +1820,9 @@ class BandKonverterApp(tk.Tk):
             "blocksize":            block,
             "overviews":            ovr,
             "overview_resampling":  resamp,
-            "nodata":               nodata,
+            "band4_mode":           band4,
+            "alpha_band":           alpha_bd,
+            "mask_nodata_value":    mask_nd,
         }
         self._run_osgeo_subprocess(cfg, Path(out).stem)
 

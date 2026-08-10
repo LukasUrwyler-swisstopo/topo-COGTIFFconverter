@@ -93,8 +93,10 @@ def _convert(cfg: dict) -> None:
     blocksize           = cfg.get("blocksize",           "256")
     overviews           = cfg.get("overviews",           "AUTO")
     overview_resampling = cfg.get("overview_resampling", "LANCZOS")
-    nodata              = cfg.get("nodata",              "")
     quality             = cfg.get("quality",              "90")
+    band4_mode          = cfg.get("band4_mode",           "nir")   # "nir" | "alpha"
+    alpha_band          = cfg.get("alpha_band")                    # 1-basierter Quellindex, nur bei band4_mode="alpha"
+    mask_nodata_value   = cfg.get("mask_nodata_value",    "0")     # "0" | "255", nur bei band4_mode="nir"
 
     def _log(msg: str) -> None:
         print(msg, flush=True)
@@ -119,17 +121,19 @@ def _convert(cfg: dict) -> None:
     while len(labels) < band_count:
         labels.append(f"Band{len(labels) + 1}")
 
-    color_interps = [
-        gdal.GetColorInterpretationName(src_ds.GetRasterBand(i).GetColorInterpretation())
-        for i in range(1, band_count + 1)
-    ]
-
-    for b in range(1, band_count + 1):
-        if b not in output_bands and color_interps[b - 1] == "Alpha":
-            _log(
-                "  WARNING       : Band %d hat ColorInterp=Alpha - Transparenzmaske faellt weg. "
-                "NoData=%s." % (b, ('<' + str(nodata) + '>' if nodata else 'nicht gesetzt'))
+    if band4_mode == "alpha":
+        if not alpha_band or alpha_band < 1 or alpha_band > band_count:
+            raise ValueError(
+                f"band4_mode='alpha' erfordert einen gueltigen 'alpha_band'-Index (1-{band_count}), "
+                f"erhalten: {alpha_band}"
             )
+        if alpha_band in output_bands:
+            raise ValueError(
+                f"Alpha-Band {alpha_band} darf nicht gleichzeitig in 'output_bands' enthalten sein."
+            )
+        _log(f"  4. Kanal      : Alpha (Band {alpha_band}) -> wird als interne Maske uebernommen")
+    else:
+        _log(f"  4. Kanal      : NIR/regulaer -> Maske aus NoData-Bedingung (Wert={mask_nodata_value}, alle Ausgabebaender)")
 
     if any(b < 1 or b > band_count for b in output_bands):
         raise ValueError(
@@ -142,13 +146,15 @@ def _convert(cfg: dict) -> None:
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-    nodata_val  = float(nodata) if str(nodata).strip() else None
+    nodata_val  = float(mask_nodata_value) if band4_mode == "nir" else None
     cog_options = [
         f"COMPRESS={compress}",
         f"BLOCKSIZE={blocksize}",
         f"OVERVIEWS={overviews}",
         f"OVERVIEW_RESAMPLING={overview_resampling}",
-        "BIGTIFF=IF_SAFER",
+        "BIGTIFF=YES",
+        "NUM_THREADS=ALL_CPUS",
+        "ADD_ALPHA=NO",
     ]
     if compress.upper() == "JPEG":
         cog_options += [f"QUALITY={quality}", f"OVERVIEW_QUALITY={quality}"]
@@ -158,14 +164,8 @@ def _convert(cfg: dict) -> None:
     _log(f"\nSchreibe COGTIFF: {output_path}")
     _log(f"  Kompression   : {compress}" + (f" (QUALITY={quality})" if compress.upper() == "JPEG" else "") + f", Kachelgroesse: {blocksize}")
     _log(f"  Overviews     : {overviews}  ({overview_resampling})")
-    _log(f"  NoData        : {nodata_val if nodata_val is not None else '(nicht gesetzt)'}")
-
-    translate_options = gdal.TranslateOptions(
-        bandList=output_bands,
-        format="COG",
-        creationOptions=cog_options,
-        noData=nodata_val,
-    )
+    if band4_mode == "nir":
+        _log(f"  NoData (Maske): {nodata_val:g}  (nur zur Maskenberechnung, nicht als Datei-Metadatum gesetzt)")
 
     # Progress callback: throttled to avoid slowing the process
     last_emit = {"t": 0.0, "p": -1.0}
@@ -185,7 +185,40 @@ def _convert(cfg: dict) -> None:
             pass
         return 1
 
-    out_ds = gdal.Translate(output_path, src_ds, options=translate_options, callback=_progress)
+    if band4_mode == "alpha":
+        _log(f"  Maske         : aus Alpha-Band {alpha_band} uebernommen (interne Maske)")
+        translate_options = gdal.TranslateOptions(
+            bandList=output_bands,
+            format="COG",
+            creationOptions=cog_options,
+            maskBand=alpha_band,
+        )
+        out_ds = gdal.Translate(output_path, src_ds, options=translate_options, callback=_progress)
+    else:
+        import numpy as np
+
+        _log(f"  Maske         : berechnet aus NoData={nodata_val:g}  "
+             f"(Pixel ungueltig, wenn ALLE Ausgabebaender = {nodata_val:g})")
+        mem_ds = gdal.Translate("", src_ds, format="MEM", bandList=output_bands)
+        arrs = [mem_ds.GetRasterBand(i).ReadAsArray() for i in range(1, mem_ds.RasterCount + 1)]
+        invalid = np.ones(arrs[0].shape, dtype=bool)
+        for arr in arrs:
+            invalid &= (arr == nodata_val)
+        mask_arr = np.where(invalid, 0, 255).astype("uint8")
+        mem_ds.CreateMaskBand(gdal.GMF_PER_DATASET)
+        mem_ds.GetRasterBand(1).GetMaskBand().WriteArray(mask_arr)
+
+        # Hinweis: 'noData' hier NICHT zusaetzlich am Ziel setzen - das erzeugt einen
+        # GDAL-internen Konflikt "conflicting mask sources", der die oben berechnete
+        # Maske verwirft (Ausgabe waere faelschlich komplett gueltig). Die Maske allein
+        # ist hier die massgebliche/vollstaendige Gueltigkeitsinformation.
+        translate_options = gdal.TranslateOptions(
+            format="COG",
+            creationOptions=cog_options,
+        )
+        out_ds = gdal.Translate(output_path, mem_ds, options=translate_options, callback=_progress)
+        mem_ds = None
+
     if out_ds is None:
         raise RuntimeError("gdal.Translate hat None zurueckgegeben – Ausgabe fehlgeschlagen.")
 
@@ -276,6 +309,7 @@ def _mosaic(cfg: dict) -> None:
         f"OVERVIEW_RESAMPLING={overview_resampling}",
         "NUM_THREADS=ALL_CPUS",
         "BIGTIFF=YES",
+        "ADD_ALPHA=NO",
     ]
     if compress.upper() == "JPEG":
         cog_options += [f"QUALITY={quality}", f"OVERVIEW_QUALITY={quality}"]
@@ -643,6 +677,10 @@ def main() -> None:
         cfg = json.load(f)
 
     action = cfg.get("action", "")
+
+    # Interne Maske statt .msk-Begleitdatei bei allen TIFF/COG-Schreibvorgaengen
+    from osgeo import gdal
+    gdal.SetConfigOption("GDAL_TIFF_INTERNAL_MASK", "YES")
 
     try:
         if action == "info":

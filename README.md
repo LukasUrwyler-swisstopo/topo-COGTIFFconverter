@@ -58,12 +58,41 @@ Beim ersten Start erkennt das GUI automatisch die OSGeo4W-Installation. Der Pfad
 
 ## Bedienung — Tab "Baender aendern"
 
-1. **Input-Datei** auswählen (4-Band COG-TIFF oder GeoTIFF)
+1. **Input-Datei** auswählen (4-Band COG-TIFF oder GeoTIFF — dieser Tab erwartet immer 4 Bänder)
 2. **Output-Datei** festlegen (wird automatisch vorgeschlagen)
-3. **Datei-Info** liest Bandanzahl, ColorInterp, Auflösung, CRS und NoData automatisch aus
+3. **Datei-Info** liest Bandanzahl, ColorInterp, Auflösung, CRS und NoData automatisch aus; erkennt
+   das Tool einen echten Alpha-Kanal (ColorInterp=Alpha), wird **"4. Kanal ist"** automatisch auf
+   `Alpha` vorgewählt
 4. **Band-Konfiguration** über Schnellauswahl-Preset oder manuelle Eingabe
-5. **COG-Optionen** anpassen (Kompression, Kachelgrösse, Overviews, Resampling, NoData)
-6. **KONVERTIEREN** starten
+5. **4. Kanal ist** — steuert, wie aus dem 4. Band eine Transparenz-Maske wird (siehe
+   [Masken-Logik](#masken-logik-4-kanal-nir-oder-alpha) unten):
+   - `NIR` (Standard) — Bänder frei wähl-/umsortierbar, Maske aus NoData-Dropdown berechnet
+   - `Alpha` — Ausgabe automatisch auf die 3 Nicht-Alpha-Bänder fixiert, Maske direkt aus dem
+     Alpha-Band übernommen
+6. **COG-Optionen** anpassen (Kompression, Kachelgrösse, Overviews, Resampling, ggf. NoData-Wert der Maske)
+7. **KONVERTIEREN** starten
+
+---
+
+## Masken-Logik (4. Kanal: NIR oder Alpha)
+
+Der Tab "Baender aendern" erwartet immer einen 4-Band-Input. Was mit dem 4. Band passiert, hängt
+vom Dropdown **"4. Kanal ist"** ab — in beiden Fällen entsteht eine **echte interne COG-Maske**
+(GDAL `GMF_PER_DATASET`, kein separates `.msk`-File, keine reine NoData-Metadaten-Angabe):
+
+| Modus | Ausgabebänder | Maskenquelle |
+|-------|---------------|--------------|
+| `Alpha` | automatisch auf die 3 Nicht-Alpha-Bänder fixiert (Eingabefeld gesperrt) | 1:1 aus dem Alpha-Band übernommen (`gdal_translate -mask <Band>`-Äquivalent) |
+| `NIR` (Standard) | frei wähl-/umsortierbar wie gehabt (Presets, manuelle Eingabe) | berechnet aus dem NoData-Dropdown (`0`/`255`): ein Pixel gilt nur dann als **ungültig**, wenn **alle** gewählten Ausgabebänder diesem Wert entsprechen (AND-Logik) |
+
+**Warum AND-Logik im NIR-Fall:** Verhindert, dass z.B. ein einzelner rein schwarzer Farbkanal
+(ohne dass es sich um echten Bildrand handelt) fälschlich als NoData maskiert wird — typische
+Bildränder bei swisstopo-Orthofotos sind in **allen** Kanälen gleichzeitig `0` bzw. `255`.
+
+**Technisch:** Im `NIR`-Modus wird der NoData-Wert **nicht** als Datei-Metadatum geschrieben,
+sondern ausschliesslich zur Maskenberechnung verwendet — GDAL verwirft sonst bei gleichzeitig
+gesetztem `noData` und einer eigenen Maske eine der beiden ("conflicting mask sources"). Die
+COG-Overviews werden aus derselben Maske automatisch mit heruntergerechnet.
 
 ---
 
@@ -135,12 +164,16 @@ Zwei Modi zur Auswahl:
 | JPEG-Qualitaet | `90` (Baender-Tab) / `95` (Mosaik-Tab) | Nur relevant bei Kompression=JPEG, Bereich 60–100 |
 | Kachelgrösse | `256` | Interne Kachelgrösse in Pixel (256, 512 oder 1024) |
 | Overviews | `AUTO` | Eingebettete Übersichtsebenen (COG-intern, keine .ovr-Datei) |
-| OV-Resampling | `LANCZOS` (Baender-Tab) / `AVERAGE` (Mosaik-Tab) | Interpolation für Overviews — LANCZOS empfohlen für Einzel-Luftbilder, AVERAGE fuer Mosaike |
-| NoData | auto (Baender-Tab) / Dropdown nach Ziel-Bit-Tiefe (Mosaik-Tab) | Baender-Tab: aus Quelldatei erkannt, bei Alpha-Band automatisch auf 0 gesetzt |
+| OV-Resampling | `AVERAGE` (beide Tabs) | Interpolation für Overviews — im Dropdown umstellbar, u.a. auf `LANCZOS` (schärfer, für Einzel-Luftbilder) |
+| NoData (Maske) | `0` — nur im Baender-Tab, nur bei "4. Kanal ist"=`NIR` | Dropdown `0`/`255`; steuert die Masken-Berechnung (siehe [Masken-Logik](#masken-logik-4-kanal-nir-oder-alpha)), wird nicht als Datei-NoData geschrieben |
+| BIGTIFF | `YES` | Erzwingt BigTIFF-Format, unabhaengig von der Dateigroesse — vermeidet die 4GB-Grenze klassischer TIFFs bei grossen Orthofotos/Mosaiken |
+| NUM_THREADS | `ALL_CPUS` | Parallele Kompression ueber alle verfuegbaren CPU-Kerne |
+| ADD_ALPHA | `NO` | GDAL-COG-Option, relevant nur bei Reprojektion (die dieses Tool nicht durchfuehrt) — aktuell ohne Wirkung, sicherheitshalber gesetzt |
+| GDAL_TIFF_INTERNAL_MASK | `YES` (global, nicht pro Tab einstellbar) | Erzwingt interne Maskenspeicherung statt `.msk`-Begleitdatei; bei COG ohnehin Standardverhalten |
 
 > **Hinweis Kachelgrösse:** 256 ist der Standard für DOP-Publikation (z.B. STAC, WMTS). 512/1024 bieten bessere Kompressionsrate bei weniger HTTP-Requests, sind aber weniger kompatibel mit Standard-Tile-Clients.
 
-> **Hinweis Overviews:** Bei COG sind Overviews intern eingebettet — es entsteht keine separate `.ovr`-Datei. `LANCZOS`-Resampling liefert die schärfsten Ergebnisse für RGB-Luftbilder, `AVERAGE` ist fuer Mosaike glaetter/robuster gegen Kachel-Naehte.
+> **Hinweis Overviews:** Bei COG sind Overviews intern eingebettet — es entsteht keine separate `.ovr`-Datei. `LANCZOS`-Resampling liefert schärfere Ergebnisse für RGB-Einzel-Luftbilder, `AVERAGE` ist glaetter/robuster gegen Kachel-Naehte bei Mosaiken.
 
 ---
 
