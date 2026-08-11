@@ -251,6 +251,34 @@ _BITDEPTH_RANGES = {
 }
 
 
+def _iter_blocks(width: int, height: int, block: int = 2048):
+    """Liefert (x, y, xsize, ysize)-Tupel fuer eine blockweise Rasterverarbeitung."""
+    for y in range(0, height, block):
+        ys = min(block, height - y)
+        for x in range(0, width, block):
+            xs = min(block, width - x)
+            yield x, y, xs, ys
+
+
+def _write_nodata_mask(ds, thresholds: list, block: int = 2048) -> None:
+    """Berechnet blockweise (speicherschonend, auch fuer sehr grosse Mosaike) eine
+    interne GDAL-Gueltigkeitsmaske: ein Pixel gilt nur dann als NoData, wenn ALLE
+    Baender gleichzeitig ihrem jeweiligen Schwellwert (Index = Bandposition in
+    'thresholds') entsprechen - analog zur Maskenlogik im 'change BANDS'-Tab
+    (dort fuer Einzeldateien direkt im Speicher, hier blockweise auf Platte)."""
+    from osgeo import gdal
+    import numpy as np
+
+    ds.CreateMaskBand(gdal.GMF_PER_DATASET)
+    mask_band = ds.GetRasterBand(1).GetMaskBand()
+    for x, y, xs, ys in _iter_blocks(ds.RasterXSize, ds.RasterYSize, block):
+        invalid = np.ones((ys, xs), dtype=bool)
+        for i, thr in enumerate(thresholds, start=1):
+            arr = ds.GetRasterBand(i).ReadAsArray(x, y, xs, ys)
+            invalid &= (arr == thr)
+        mask_band.WriteArray(np.where(invalid, 0, 255).astype("uint8"), x, y)
+
+
 def _mosaic(cfg: dict) -> None:
     """Mosaikiert Kachel-TIFFs (VRT) und schreibt das Ergebnis als COGTIFF. Fortschritt auf stdout."""
     from osgeo import gdal
@@ -316,8 +344,7 @@ def _mosaic(cfg: dict) -> None:
     else:
         cog_options.append("PREDICTOR=2")
 
-    a_nodata   = nodata.split()[0] if nodata else None
-    nodata_val = float(a_nodata) if a_nodata is not None else None
+    nodata_tokens = [float(t) for t in nodata.split()] if nodata else []
 
     src_ds = gdal.Open(str(vrt_path), gdal.GA_ReadOnly)
     if src_ds is None:
@@ -340,6 +367,16 @@ def _mosaic(cfg: dict) -> None:
         out_labels = [labels[b - 1] for b in output_bands]
         _log(f"  Ausgabebaender : {dict(enumerate(out_labels, 1))}  (Quellindizes: {output_bands})")
 
+    # NoData-Schwellwerte je Ausgabeband, aus den Quellband-Positionen der
+    # GUI-Angabe (z.B. "0 0 0" -> Band1=0, Band2=0, Band3=0). Fehlt fuer ein
+    # gewaehltes Ausgabeband ein eigener Wert (z.B. weniger Werte als Baender),
+    # wird der erste Wert als Fallback verwendet.
+    mask_bands = output_bands or list(range(1, band_count + 1))
+    nodata_thresholds = [
+        nodata_tokens[b - 1] if (b - 1) < len(nodata_tokens) else nodata_tokens[0]
+        for b in mask_bands
+    ] if nodata_tokens else []
+
     # --- Bit-Tiefe-Konvertierung (Output) ---
     output_type  = None
     scale_params = None
@@ -358,21 +395,12 @@ def _mosaic(cfg: dict) -> None:
     _log(f"  Kompression   : {compress}" + (f" (QUALITY={quality})" if compress.upper() == "JPEG" else ""))
     _log(f"  Kachelgroesse : {blocksize}")
     _log(f"  Overviews     : {overviews}  ({overview_resampling})")
-    _log(f"  NoData        : {nodata_val if nodata_val is not None else '(nicht gesetzt)'}")
+    if nodata_thresholds:
+        _log(f"  NoData-Maske  : Schwellwerte je Ausgabeband {nodata_thresholds}  "
+             f"(Pixel ungueltig, wenn ALLE Ausgabebaender gleichzeitig matchen)")
+    else:
+        _log("  NoData        : (nicht gesetzt)")
     _log("  Koordinatensys: EPSG:2056")
-
-    translate_kwargs = dict(
-        format="COG",
-        outputSRS="EPSG:2056",
-        noData=nodata_val,
-        creationOptions=cog_options,
-    )
-    if band_list is not None:
-        translate_kwargs["bandList"] = band_list
-    if output_type is not None:
-        translate_kwargs["outputType"]  = output_type
-        translate_kwargs["scaleParams"] = scale_params
-    translate_options = gdal.TranslateOptions(**translate_kwargs)
 
     last_emit = {"t": 0.0, "p": -1.0}
 
@@ -390,7 +418,75 @@ def _mosaic(cfg: dict) -> None:
             pass
         return 1
 
-    out_ds = gdal.Translate(str(out_path), src_ds, options=translate_options, callback=_progress)
+    if nodata_thresholds:
+        # Zweistufig, damit die Maske speicherschonend (blockweise, auch bei sehr
+        # grossen Mosaiken) und ohne verlustbehaftete Rundungsfehler (COMPRESS=JPEG)
+        # berechnet werden kann:
+        #   1) unkomprimiertes Zwischenraster (Bandauswahl + Bit-Tiefe bereits angewandt)
+        #   2) NoData-Maske blockweise berechnen und als interne GDAL-Maske anhaengen
+        #   3) als finales COGTIFF komprimieren (Maske wird automatisch uebernommen)
+        # 'noData' wird am Ziel bewusst NICHT zusaetzlich gesetzt - das erzeugt einen
+        # GDAL-internen Konflikt "conflicting mask sources" und verwirft die Maske.
+        scratch_path = vrt_dir / f"{output_name}_scratch.tif"
+        _log(f"\nZwischenraster (fuer Maskenberechnung): {scratch_path}")
+
+        scratch_kwargs = dict(
+            format="GTiff",
+            outputSRS="EPSG:2056",
+            # explizit unsetzen: das VRT traegt aus srcNodata/VRTNodata bereits ein
+            # NoDataValue je Band - das wuerde sonst mitkopiert und kollidiert mit
+            # der unten separat berechneten Maske ("conflicting mask sources").
+            noData="none",
+            creationOptions=["TILED=YES", "BLOCKXSIZE=512", "BLOCKYSIZE=512",
+                              "COMPRESS=LZW", "BIGTIFF=YES"],
+        )
+        if band_list is not None:
+            scratch_kwargs["bandList"] = band_list
+        if output_type is not None:
+            scratch_kwargs["outputType"]  = output_type
+            scratch_kwargs["scaleParams"] = scale_params
+        scratch_options = gdal.TranslateOptions(**scratch_kwargs)
+        scratch_ds = gdal.Translate(str(scratch_path), src_ds, options=scratch_options, callback=_progress)
+        if scratch_ds is None:
+            raise RuntimeError("gdal.Translate (Zwischenraster) hat None zurueckgegeben.")
+        scratch_ds.FlushCache()
+        scratch_ds = None
+        src_ds = None
+
+        scratch_ds = gdal.Open(str(scratch_path), gdal.GA_Update)
+        if scratch_ds is None:
+            raise RuntimeError(f"GDAL konnte das Zwischenraster nicht oeffnen: {scratch_path}")
+        _write_nodata_mask(scratch_ds, nodata_thresholds)
+        scratch_ds.FlushCache()
+
+        final_options = gdal.TranslateOptions(
+            format="COG",
+            outputSRS="EPSG:2056",
+            creationOptions=cog_options,
+        )
+        last_emit["t"], last_emit["p"] = 0.0, -1.0
+        out_ds = gdal.Translate(str(out_path), scratch_ds, options=final_options, callback=_progress)
+        scratch_ds = None
+        for candidate in (scratch_path, Path(str(scratch_path) + ".aux.xml")):
+            try:
+                if candidate.exists():
+                    candidate.unlink()
+            except OSError:
+                pass
+    else:
+        translate_kwargs = dict(
+            format="COG",
+            outputSRS="EPSG:2056",
+            creationOptions=cog_options,
+        )
+        if band_list is not None:
+            translate_kwargs["bandList"] = band_list
+        if output_type is not None:
+            translate_kwargs["outputType"]  = output_type
+            translate_kwargs["scaleParams"] = scale_params
+        translate_options = gdal.TranslateOptions(**translate_kwargs)
+        out_ds = gdal.Translate(str(out_path), src_ds, options=translate_options, callback=_progress)
+
     if out_ds is None:
         raise RuntimeError("gdal.Translate hat None zurueckgegeben - Ausgabe fehlgeschlagen.")
 
