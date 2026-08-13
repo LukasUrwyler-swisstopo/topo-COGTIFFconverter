@@ -28,9 +28,10 @@ from pathlib import Path
 from typing import List, Tuple, Dict
 
 # ─── Pfade ────────────────────────────────────────────────────────────────────
-SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
-RUNNER_SCRIPT = os.path.join(SCRIPT_DIR, "_osgeo_runner.py")
-CONFIG_FILE   = os.path.join(SCRIPT_DIR, "_cogtiff_config.json")
+SCRIPT_DIR         = os.path.dirname(os.path.abspath(__file__))
+RUNNER_SCRIPT      = os.path.join(SCRIPT_DIR, "_osgeo_runner.py")
+CONFIG_FILE        = os.path.join(SCRIPT_DIR, "_cogtiff_config.json")
+DEFAULT_GRID_SHAPE = os.path.join(SCRIPT_DIR, "swissGRID_1km2_shp", "chGRID_1km2.shp")
 
 # ─── OSGeo4W Python Erkennung ─────────────────────────────────────────────────
 def _detect_osgeo_python() -> str:
@@ -168,6 +169,13 @@ NODATA_OPTIONS = {
     "8bit":  ["(kein NoData)", "0 0 0", "255 255 255"],
     "16bit": ["(kein NoData)", "0 0 0 0", "65535 65535 65535"],
 }
+
+# ─── Dropdown-Eintrag fuer die alphabasierte Maske (Mosaik-Tab) ───────────────
+# Wird der Dropdown-Liste von NODATA_OPTIONS nur dann vorangestellt, wenn im
+# Input-Sample ein Alpha-Kanal (i.d.R. Band 4) erkannt wurde; ersetzt dann die
+# wertbasierte NoData-Schwelle durch die Uebernahme des Alpha-Bands als interne
+# GDAL-Maske (analog zum 4.-Kanal-Modus "Alpha" im "change BANDS"-Tab).
+ALPHA_NODATA_LABEL = "Alpha-Kanal (interne Maske)"
 
 # ─── Log-Queue Writer ──────────────────────────────────────────────────────────
 class _QueueWriter:
@@ -502,6 +510,8 @@ class BandKonverterApp(tk.Tk):
         else:
             self._big_single_frame.grid_remove()
             self._big_tiles_frame.grid()
+            if not self._big_grid_var.get().strip() and os.path.isfile(DEFAULT_GRID_SHAPE):
+                self._big_grid_var.set(DEFAULT_GRID_SHAPE)
 
     def _build_big_options(self, parent):
         sec = ttk.LabelFrame(parent, text="TIFF-Optionen", padding=10,
@@ -584,10 +594,14 @@ class BandKonverterApp(tk.Tk):
             self._big_out_dir_var.set(path.replace("/", "\\"))
 
     def _browse_big_grid_shape(self):
-        path = filedialog.askopenfilename(
-            title="Grid-Shape auswaehlen",
-            filetypes=[("Shapefile", "*.shp"), ("Alle Dateien", "*.*")],
-        )
+        current   = self._big_grid_var.get().strip()
+        start_dir = os.path.dirname(current) if current and os.path.isfile(current) \
+                    else os.path.dirname(DEFAULT_GRID_SHAPE)
+        kwargs = {"title": "Grid-Shape auswaehlen",
+                  "filetypes": [("Shapefile", "*.shp"), ("Alle Dateien", "*.*")]}
+        if os.path.isdir(start_dir):
+            kwargs["initialdir"] = start_dir
+        path = filedialog.askopenfilename(**kwargs)
         if path:
             self._big_grid_var.set(path.replace("/", "\\"))
 
@@ -689,16 +703,20 @@ class BandKonverterApp(tk.Tk):
                               style="Section.TLabelframe")
         sec.pack(fill="x", pady=(0, 6))
 
+        self._mosaic_alpha_band = None   # 1-basierter Alpha-Bandindex, gesetzt durch _refresh_mosaic_info()
+
         nd_lbl = ttk.Label(sec, text="NoData-Wert:", font=("Segoe UI", 9, "bold"))
         nd_lbl.grid(row=0, column=0, sticky="w", pady=3)
         self._mosaic_nodata_var   = tk.StringVar()
         self._mosaic_nodata_combo = ttk.Combobox(sec, textvariable=self._mosaic_nodata_var,
-                                                  state="readonly", width=22)
+                                                  state="readonly", width=26)
         self._mosaic_nodata_combo.grid(row=0, column=1, sticky="w", padx=(8, 0), pady=3)
 
         hint = ttk.Label(sec,
-            text="Gilt fuer -srcnodata / -vrtnodata / -a_nodata  |  Hintergrundfarbe der Kacheln pruefen",
-            font=("", 8))
+            text="Gilt fuer -srcnodata / -vrtnodata / -a_nodata  |  Hintergrundfarbe der Kacheln pruefen  |  "
+                 "'Alpha-Kanal': Maske kommt direkt aus dem erkannten Alpha-Band (kein Wertevergleich), "
+                 "erfordert eine Bandauswahl ohne dieses Band (z.B. Preset 'RGBN → RGB')",
+            font=("", 8), wraplength=560, justify="left")
         hint.grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 0))
         self._dim_labels.append(hint)
 
@@ -707,9 +725,15 @@ class BandKonverterApp(tk.Tk):
         self._update_mosaic_nodata_options()
 
     def _update_mosaic_nodata_options(self):
-        opts = NODATA_OPTIONS.get(self._mosaic_bitdepth_out_var.get(), ["(kein NoData)"])
+        opts = list(NODATA_OPTIONS.get(self._mosaic_bitdepth_out_var.get(), ["(kein NoData)"]))
+        alpha_available = bool(self._mosaic_alpha_band)
+        if alpha_available:
+            opts.insert(0, ALPHA_NODATA_LABEL)
         self._mosaic_nodata_combo.config(values=opts)
-        self._mosaic_nodata_var.set(opts[1] if len(opts) > 1 else opts[0])
+        if alpha_available:
+            self._mosaic_nodata_var.set(ALPHA_NODATA_LABEL)
+        else:
+            self._mosaic_nodata_var.set(opts[1] if len(opts) > 1 else opts[0])
 
     def _build_mosaic_bitdepth_output(self, parent):
         sec = ttk.LabelFrame(parent, text="Bit-Tiefe (Output)", padding=10,
@@ -898,8 +922,9 @@ class BandKonverterApp(tk.Tk):
 
         self._mosaic_warn_alpha = ttk.Label(
             sec,
-            text="⚠  Alpha-Kanal erkannt — geht bei Bandauswahl ohne diesen Kanal verloren; "
-                 "NoData-Wert unter 'NoData-Wert (Input)' pruefen.",
+            text="ℹ  Alpha-Kanal erkannt — 'NoData-Wert (Input)' wurde auf 'Alpha-Kanal' gesetzt; "
+                 "bei Bandauswahl ohne diesen Kanal (z.B. Preset 'RGBN → RGB') wird die Transparenz "
+                 "automatisch als interne Maske fuer alle Ausgabebaender uebernommen.",
             font=("Segoe UI", 8, "italic"), wraplength=560, justify="left",
         )
         self._mosaic_warn_alpha.grid(row=len(fields), column=0, columnspan=2,
@@ -1454,6 +1479,8 @@ class BandKonverterApp(tk.Tk):
             for attr in info_attrs:
                 getattr(self, attr).config(text="–")
             self._mosaic_warn_alpha.grid_remove()
+            self._mosaic_alpha_band = None
+            self._update_mosaic_nodata_options()
 
         if not src_dir or not os.path.isdir(src_dir):
             _reset()
@@ -1499,6 +1526,9 @@ class BandKonverterApp(tk.Tk):
                     self._mosaic_info_size.config(text="{:.1f} MB".format(info.get('size_mb', 0.0)))
                 except Exception:
                     pass
+
+                self._mosaic_alpha_band = alpha_bands[0] if alpha_bands else None
+                self._update_mosaic_nodata_options()
 
                 if alpha_bands:
                     self._mosaic_warn_alpha.grid()
@@ -1881,9 +1911,30 @@ class BandKonverterApp(tk.Tk):
         ovr        = self._mosaic_overviews_var.get()
         resamp     = self._mosaic_resampling_var.get()
         nodata_raw = self._mosaic_nodata_var.get()
-        nodata     = "" if nodata_raw.startswith("(") else nodata_raw
         bitdepth_raw = self._mosaic_bitdepth_out_var.get()
         bitdepth   = "" if bitdepth_raw.startswith("(") else bitdepth_raw
+
+        if nodata_raw == ALPHA_NODATA_LABEL:
+            mask_mode = "alpha"
+            nodata    = ""
+            alpha_bd  = self._mosaic_alpha_band
+            if not alpha_bd:
+                from tkinter import messagebox
+                messagebox.showerror("Eingabe-Fehler",
+                    "Kein Alpha-Band erkannt — 'Datei-Info aktualisieren' anklicken "
+                    "oder einen anderen NoData-Wert waehlen.", parent=self)
+                return
+            if alpha_bd in bands:
+                from tkinter import messagebox
+                messagebox.showerror("Eingabe-Fehler",
+                    f"Alpha-Band {alpha_bd} darf nicht gleichzeitig in 'Ausgabebaender' "
+                    "enthalten sein — es wird als interne Maske verwendet, nicht als Datenband.",
+                    parent=self)
+                return
+        else:
+            mask_mode = "value"
+            nodata    = "" if nodata_raw.startswith("(") else nodata_raw
+            alpha_bd  = None
 
         self._running = True
         self._start_mosaic_btn.config(state="disabled")
@@ -1894,15 +1945,18 @@ class BandKonverterApp(tk.Tk):
 
         threading.Thread(
             target=self._run_mosaic_thread,
-            args=(inp, out, name, bands, labels, compress, quality, block, ovr, resamp, nodata, bitdepth),
+            args=(inp, out, name, bands, labels, compress, quality, block, ovr, resamp,
+                  nodata, bitdepth, mask_mode, alpha_bd),
             daemon=True,
         ).start()
 
     def _run_mosaic_thread(self, inp, out, name, bands, labels,
-                           compress, quality, block, ovr, resamp, nodata, bitdepth):
+                           compress, quality, block, ovr, resamp, nodata, bitdepth,
+                           mask_mode, alpha_bd):
         try:
             self._exec_mosaic_with_osgeo(inp, out, name, bands, labels,
-                                          compress, quality, block, ovr, resamp, nodata, bitdepth)
+                                          compress, quality, block, ovr, resamp, nodata, bitdepth,
+                                          mask_mode, alpha_bd)
             self.after(0, self._on_done_mosaic, True)
         except Exception as e:
             self._log_q.put(f"\n[FEHLER] {e}\n")
@@ -1910,7 +1964,8 @@ class BandKonverterApp(tk.Tk):
             self.after(0, self._on_done_mosaic, False)
 
     def _exec_mosaic_with_osgeo(self, inp, out, name, bands, labels,
-                                 compress, quality, block, ovr, resamp, nodata, bitdepth):
+                                 compress, quality, block, ovr, resamp, nodata, bitdepth,
+                                 mask_mode, alpha_bd):
         """Startet _osgeo_runner.py (Aktion 'mosaic') als Subprocess mit OSGeo4W Python."""
         cfg = {
             "action":               "mosaic",
@@ -1926,6 +1981,8 @@ class BandKonverterApp(tk.Tk):
             "output_bands":         bands,
             "input_band_labels":    labels,
             "output_bitdepth":      bitdepth,
+            "mask_mode":            mask_mode,
+            "alpha_band":           alpha_bd,
         }
         self._run_osgeo_subprocess(cfg, name)
 

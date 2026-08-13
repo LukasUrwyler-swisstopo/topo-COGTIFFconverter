@@ -295,6 +295,14 @@ def _mosaic(cfg: dict) -> None:
     output_bands        = cfg.get("output_bands",        []) or []
     input_band_labels   = cfg.get("input_band_labels",   []) or []
     output_bitdepth     = cfg.get("output_bitdepth",     "").strip()
+    mask_mode           = cfg.get("mask_mode",            "value")  # "value" | "alpha"
+    alpha_band          = cfg.get("alpha_band")                     # 1-basierter Quellindex, nur bei mask_mode="alpha"
+
+    if mask_mode == "alpha":
+        # Alpha-Maske ersetzt die wertbasierte NoData-Schwelle vollstaendig - das VRT
+        # traegt daher keinen srcNodata/VRTNodata, das Alpha-Band bleibt als regulaeres
+        # VRT-Band erhalten und wird weiter unten per maskBand uebernommen.
+        nodata = ""
 
     def _log(msg: str) -> None:
         print(msg, flush=True)
@@ -353,6 +361,21 @@ def _mosaic(cfg: dict) -> None:
     band_count = src_ds.RasterCount
     src_dtype  = src_ds.GetRasterBand(1).DataType
 
+    if mask_mode == "alpha":
+        if not alpha_band or alpha_band < 1 or alpha_band > band_count:
+            raise ValueError(
+                f"mask_mode='alpha' erfordert einen gueltigen 'alpha_band'-Index (1-{band_count}), "
+                f"erhalten: {alpha_band}"
+            )
+        if not output_bands:
+            output_bands = [b for b in range(1, band_count + 1) if b != alpha_band]
+        if alpha_band in output_bands:
+            raise ValueError(
+                f"Alpha-Band {alpha_band} darf nicht gleichzeitig in 'output_bands' enthalten sein "
+                "(wird als interne Maske verwendet, nicht als Datenband)."
+            )
+        _log(f"  4. Kanal      : Alpha (Band {alpha_band}) -> wird als interne Maske uebernommen")
+
     # --- Band-Auswahl (analog zur 'convert'-Aktion) ---
     if any(b < 1 or b > band_count for b in output_bands):
         raise ValueError(
@@ -395,7 +418,9 @@ def _mosaic(cfg: dict) -> None:
     _log(f"  Kompression   : {compress}" + (f" (QUALITY={quality})" if compress.upper() == "JPEG" else ""))
     _log(f"  Kachelgroesse : {blocksize}")
     _log(f"  Overviews     : {overviews}  ({overview_resampling})")
-    if nodata_thresholds:
+    if mask_mode == "alpha":
+        _log(f"  Maske         : aus Alpha-Band {alpha_band} uebernommen (interne Maske, kein Wertevergleich)")
+    elif nodata_thresholds:
         _log(f"  NoData-Maske  : Schwellwerte je Ausgabeband {nodata_thresholds}  "
              f"(Pixel ungueltig, wenn ALLE Ausgabebaender gleichzeitig matchen)")
     else:
@@ -418,7 +443,27 @@ def _mosaic(cfg: dict) -> None:
             pass
         return 1
 
-    if nodata_thresholds:
+    if mask_mode == "alpha":
+        # Einstufig, analog zur 'convert'-Aktion: das Alpha-Band wird GDAL direkt als
+        # maskBand uebergeben (bezogen auf die Bandnummerierung des Quell-VRT, NICHT
+        # auf die Ausgabebaender-Liste) und automatisch in die interne COG-Maske
+        # uebernommen - kein Zwischenraster noetig, da GDAL die Maske selbst blockweise
+        # aus dem Quellband liest. 'noData' wird am Ziel bewusst NICHT zusaetzlich
+        # gesetzt (gleicher Grund wie bei der wertbasierten Maske unten: "conflicting
+        # mask sources" wuerde die Maske verwerfen).
+        translate_kwargs = dict(
+            format="COG",
+            outputSRS="EPSG:2056",
+            bandList=band_list,
+            maskBand=alpha_band,
+            creationOptions=cog_options,
+        )
+        if output_type is not None:
+            translate_kwargs["outputType"]  = output_type
+            translate_kwargs["scaleParams"] = scale_params
+        translate_options = gdal.TranslateOptions(**translate_kwargs)
+        out_ds = gdal.Translate(str(out_path), src_ds, options=translate_options, callback=_progress)
+    elif nodata_thresholds:
         # Zweistufig, damit die Maske speicherschonend (blockweise, auch bei sehr
         # grossen Mosaiken) und ohne verlustbehaftete Rundungsfehler (COMPRESS=JPEG)
         # berechnet werden kann:

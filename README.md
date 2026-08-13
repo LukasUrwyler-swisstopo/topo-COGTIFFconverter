@@ -94,6 +94,19 @@ sondern ausschliesslich zur Maskenberechnung verwendet — GDAL verwirft sonst b
 gesetztem `noData` und einer eigenen Maske eine der beiden ("conflicting mask sources"). Die
 COG-Overviews werden aus derselben Maske automatisch mit heruntergerechnet.
 
+**Im Tab "COGTIFF erstellen" (Mosaik)** gilt dieselbe Logik, nur ueber das Dropdown
+**"NoData-Wert (Input)"** gesteuert statt ueber "4. Kanal ist":
+
+| Auswahl | Ausgabebänder | Maskenquelle |
+|---------|---------------|--------------|
+| `Alpha-Kanal (interne Maske)` — erscheint/wird automatisch vorgewaehlt, sobald ein Alpha-Band erkannt wurde | frei wähl-/umsortierbar (Presets, manuelle Eingabe); ohne explizite Auswahl automatisch alle Nicht-Alpha-Bänder | 1:1 aus dem Alpha-Band übernommen, unabhängig von der Zahl der gemosaikten Kacheln |
+| Wertbasierte Presets (`0 0 0` usw.) | frei wähl-/umsortierbar | berechnet aus dem gewählten NoData-Wert (AND-Logik über alle Ausgabebänder), blockweise über das gesamte Mosaik |
+
+Wird **`Alpha-Kanal`** gewählt und das Alpha-Band trotzdem explizit in "Ausgabebänder" mit
+aufgeführt, bricht die Konvertierung mit einer Fehlermeldung ab (das Alpha-Band kann nicht
+gleichzeitig Datenband und Maskenquelle sein). Auch hier wird — aus demselben Grund
+("conflicting mask sources") — bewusst **kein** zusätzlicher NoData-Tag geschrieben.
+
 ---
 
 ## Bedienung — Tab "COGTIFF erstellen" (Mosaik aus Kacheln)
@@ -112,7 +125,10 @@ zu einem einzigen COGTIFF. Entspricht der Pipeline `gdalbuildvrt` → `gdal_tran
    automatisch erkannt; bei Konvertierung wird linear skaliert (8bit ↔ 16bit).
 6. **NoData-Wert** waehlen — die Vorschlaege richten sich nach der gewaehlten Ziel-Bit-Tiefe:
    8bit → `0 0 0` / `255 255 255`; 16bit → `0 0 0 0` / `65535 65535 65535`;
-   gilt gemeinsam fuer `-srcnodata`, `-vrtnodata` und `-a_nodata`
+   gilt gemeinsam fuer `-srcnodata`, `-vrtnodata` und `-a_nodata`.
+   Erkennt die **Datei-Info** in der Muster-Kachel einen echten Alpha-Kanal (ColorInterp=Alpha,
+   i.d.R. Band 4), erscheint zusaetzlich die Option **`Alpha-Kanal (interne Maske)`** und wird
+   automatisch vorgewaehlt — siehe [Masken-Logik](#masken-logik-4-kanal-nir-oder-alpha) unten.
 7. **COG-Optionen** anpassen (Kompression inkl. JPEG mit Qualitaets-Regler, Kachelgrösse, Overviews, Resampling)
 8. **COGTIFF ERSTELLEN** starten
 
@@ -165,7 +181,7 @@ Zwei Modi zur Auswahl:
 | Kachelgrösse | `256` | Interne Kachelgrösse in Pixel (256, 512 oder 1024) |
 | Overviews | `AUTO` | Eingebettete Übersichtsebenen (COG-intern, keine .ovr-Datei) |
 | OV-Resampling | `AVERAGE` (beide Tabs) | Interpolation für Overviews — im Dropdown umstellbar, u.a. auf `LANCZOS` (schärfer, für Einzel-Luftbilder) |
-| NoData (Maske) | `0` — nur im Baender-Tab, nur bei "4. Kanal ist"=`NIR` | Dropdown `0`/`255`; steuert die Masken-Berechnung (siehe [Masken-Logik](#masken-logik-4-kanal-nir-oder-alpha)), wird nicht als Datei-NoData geschrieben |
+| NoData (Maske) | Baender-Tab: `0` (nur bei "4. Kanal ist"=`NIR`) — Mosaik-Tab: bitentiefenabhaengiges Preset bzw. `Alpha-Kanal` falls erkannt | Steuert ausschliesslich die Masken-Berechnung (siehe [Masken-Logik](#masken-logik-4-kanal-nir-oder-alpha)), wird nie als Datei-NoData-Tag geschrieben |
 | BIGTIFF | `YES` | Erzwingt BigTIFF-Format, unabhaengig von der Dateigroesse — vermeidet die 4GB-Grenze klassischer TIFFs bei grossen Orthofotos/Mosaiken |
 | NUM_THREADS | `ALL_CPUS` | Parallele Kompression ueber alle verfuegbaren CPU-Kerne |
 | ADD_ALPHA | `NO` | GDAL-COG-Option, relevant nur bei Reprojektion (die dieses Tool nicht durchfuehrt) — aktuell ohne Wirkung, sicherheitshalber gesetzt |
