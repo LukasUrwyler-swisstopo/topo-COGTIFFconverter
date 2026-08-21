@@ -8,8 +8,9 @@ Drei GDAL-Werkzeuge rund um Cloud-Optimized GeoTIFFs (COG), als Tabs im selben G
 
 ## GUI
 
+Eingabe im cmd-Terminal:
 ```bash
-python 01_GUI_cogtiffConverter.py
+python pfad/01_GUI_cogtiffConverter.py
 ```
 <img width="800" height="1200" alt="image" src="https://github.com/user-attachments/assets/40fb2f95-27c4-4ffb-aaa6-817454141f8e" />
 
