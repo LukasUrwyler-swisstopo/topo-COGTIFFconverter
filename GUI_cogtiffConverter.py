@@ -1,5 +1,5 @@
 """
-01_GUI_cogtiffConverter.py  –  COGTIFF Werkzeuge GUI
+GUI_cogtiffConverter.py  –  COGTIFF Werkzeuge GUI
 Tkinter-Oberflaeche mit zwei Tabs:
   - "COGTIFF erstellen"  : Kachel-TIFFs (+.tfw) zu VRT mosaikieren und als COGTIFF schreiben
   - "Baender aendern"    : flexibler Band-Konverter (RGBN → RGB / NRG usw.)
@@ -29,8 +29,9 @@ from typing import List, Tuple, Dict
 
 # ─── Pfade ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR         = os.path.dirname(os.path.abspath(__file__))
-RUNNER_SCRIPT      = os.path.join(SCRIPT_DIR, "_osgeo_runner.py")
-CONFIG_FILE        = os.path.join(SCRIPT_DIR, "_cogtiff_config.json")
+PROCESS_SCRIPTS_DIR = os.path.join(SCRIPT_DIR, "process_scripts")
+RUNNER_SCRIPT      = os.path.join(PROCESS_SCRIPTS_DIR, "_osgeo_runner.py")
+CONFIG_FILE        = os.path.join(PROCESS_SCRIPTS_DIR, "_cogtiff_config.json")
 DEFAULT_GRID_SHAPE = os.path.join(SCRIPT_DIR, "swissGRID_1km2_shp", "chGRID_1km2.shp")
 
 # ─── OSGeo4W Python Erkennung ─────────────────────────────────────────────────

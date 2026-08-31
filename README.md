@@ -10,7 +10,7 @@ Drei GDAL-Werkzeuge rund um Cloud-Optimized GeoTIFFs (COG), als Tabs im selben G
 
 Eingabe im cmd-Terminal:
 ```bash
-python pfad/01_GUI_cogtiffConverter.py
+python pfad/GUI_cogtiffConverter.py
 ```
 <img width="800" height="1200" alt="image" src="https://github.com/user-attachments/assets/40fb2f95-27c4-4ffb-aaa6-817454141f8e" />
 
@@ -31,9 +31,11 @@ Typische Anwendungsfälle mit swisstopo-Luftbildern (DOP) fuer die Band-Konverti
 
 | Datei | Beschreibung |
 |-------|-------------|
-| `01_GUI_cogtiffConverter.py` | Tkinter-GUI — startet mit Standard-Python |
-| `_osgeo_runner.py` | GDAL-Worker — wird intern via OSGeo4W Python als Subprocess gestartet |
-| `02_convertDATA_cogtiff_4band_to_3band.py` | Standalone-Script für die Kommandozeile (erfordert OSGeo4W Python direkt) |
+| `GUI_cogtiffConverter.py` | Tkinter-GUI — startet mit Standard-Python |
+| `process_scripts/_osgeo_runner.py` | GDAL-Worker — wird intern via OSGeo4W Python als Subprocess gestartet |
+| `process_scripts/02_convertDATA_cogtiff_4band_to_3band.py` | Standalone-Script für die Kommandozeile (erfordert OSGeo4W Python direkt) |
+| `process_scripts/_cogtiff_config.json` | GUI-Konfiguration (OSGeo4W-Python-Pfad), wird automatisch angelegt |
+| `test/test_functions.py` | Import-/Sanity-Checks (siehe [Tests](#tests)) |
 
 ---
 
@@ -49,10 +51,10 @@ Typische Anwendungsfälle mit swisstopo-Luftbildern (DOP) fuer die Band-Konverti
 ## GUI starten
 
 ```bash
-python 01_GUI_cogtiffConverter.py
+python GUI_cogtiffConverter.py
 ```
 
-Beim ersten Start erkennt das GUI automatisch die OSGeo4W-Installation. Der Pfad kann über die Schaltfläche **Ändern…** manuell gesetzt und wird in `_cogtiff_config.json` gespeichert.
+Beim ersten Start erkennt das GUI automatisch die OSGeo4W-Installation. Der Pfad kann über die Schaltfläche **Ändern…** manuell gesetzt und wird in `process_scripts/_cogtiff_config.json` gespeichert.
 
 
 ---
@@ -222,10 +224,10 @@ Für swisstopo-Daten massgebend: **EPSG:2056** (LV95 / LHN95).
 
 ## Standalone-Script (ohne GUI)
 
-Für Batch-Verarbeitung kann `02_convertDATA_cogtiff_4band_to_3band.py` direkt mit OSGeo4W Python ausgeführt werden:
+Für Batch-Verarbeitung kann `process_scripts/02_convertDATA_cogtiff_4band_to_3band.py` direkt mit OSGeo4W Python ausgeführt werden:
 
 ```bash
-C:\OSGeo4W\bin\python3.exe 02_convertDATA_cogtiff_4band_to_3band.py
+C:\OSGeo4W\bin\python3.exe process_scripts\02_convertDATA_cogtiff_4band_to_3band.py
 ```
 
 Konfiguration direkt im Script-Kopf anpassen (`INPUT_PATH`, `OUTPUT_PATH`, `OUTPUT_BANDS`).
@@ -235,11 +237,11 @@ Konfiguration direkt im Script-Kopf anpassen (`INPUT_PATH`, `OUTPUT_PATH`, `OUTP
 ## Architektur
 
 ```
-01_GUI_cogtiffConverter.py         (Standard-Python, tkinter)
+GUI_cogtiffConverter.py            (Standard-Python, tkinter)
         │
         │  JSON-Config (tempfile)
         ▼
-_osgeo_runner.py                (OSGeo4W Python, GDAL)
+process_scripts/_osgeo_runner.py   (OSGeo4W Python, GDAL)
     Aktionen: info / convert / mosaic / to_bigtiff
         │
         │  stdout → live ins GUI-Log + Logdatei
@@ -253,7 +255,7 @@ Die Trennung ermöglicht es, das GUI mit jeder Standard-Python-Installation zu s
 
 ## Tests
 
-Eine kleine, non-invasive Testdatei `test_functions.py` liegt im Projekt-Root und führt einfache Import-/Sanity-Checks durch (keine GDAL-Operationen).
+Eine kleine, non-invasive Testdatei `test/test_functions.py` führt einfache Import-/Sanity-Checks durch (keine GDAL-Operationen).
 
 Tests ausführen:
 
