@@ -12,8 +12,7 @@ Eingabe im cmd-Terminal:
 ```bash
 python pfad/GUI_cogtiffConverter.py
 ```
-<img width="800" height="1200" alt="image" src="https://github.com/user-attachments/assets/40fb2f95-27c4-4ffb-aaa6-817454141f8e" />
-
+<img width="635" height="692" alt="image" src="https://github.com/user-attachments/assets/8104beba-4c7d-4b9e-b37a-5e2ed0d2c239" />
 
 
 Typische Anwendungsfälle mit swisstopo-Luftbildern (DOP) fuer die Band-Konvertierung:
