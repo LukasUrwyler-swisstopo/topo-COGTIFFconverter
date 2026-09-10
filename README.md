@@ -3,8 +3,8 @@
 Drei GDAL-Werkzeuge rund um Cloud-Optimized GeoTIFFs (COG), als Tabs im selben GUI:
 
 - **COGTIFF erstellen** — mosaikiert gekachelte `.tif`/`.tfw`-Dateien (z.B. 1km²-Kacheln) per VRT zu einem einzigen COGTIFF, optional mit Band-Mapping und Bit-Tiefe-Konvertierung.
-- **cogtiff to TIFF** — konvertiert ein COGTIFF zu klassischem (Big)TIFF + `.tfw`-Weltdatei: entweder als einzelne Datei, oder als Kachel-Set gemaess Grid-Shape (Dateiname je Kachel aus Attributfeld `NAME`).
-- **Baender aendern** — konvertiert ein COG/GeoTIFF mit beliebiger Bandanzahl in ein neues COG mit frei konfigurierbarem Band-Mapping.
+- **COGTIFF to TIFF** — konvertiert ein COGTIFF zu klassischem (Big)TIFF + `.tfw`-Weltdatei: entweder als einzelne Datei, oder als Kachel-Set gemaess Grid-Shape (Dateiname je Kachel aus Attributfeld `NAME`).
+- **change BANDS** — konvertiert ein COG/GeoTIFF mit beliebiger Bandanzahl in ein neues COG mit frei konfigurierbarem Band-Mapping.
 
 ## GUI
 
