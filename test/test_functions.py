@@ -14,7 +14,7 @@ def load_module_from_path(name, path):
 def test_constants_and_presets():
     gui_mod = load_module_from_path(
         "gui_module",
-        os.path.join(PROJECT_ROOT, "GUI_cogtiffConverter.py"),
+        os.path.join(PROJECT_ROOT, "GUI_COGtools.py"),
     )
 
     assert os.path.basename(gui_mod.RUNNER_SCRIPT) == "_osgeo_runner.py"
@@ -25,7 +25,7 @@ def test_constants_and_presets():
 def test_detect_python_home_returns_string():
     gui_mod = load_module_from_path(
         "gui_module",
-        os.path.join(PROJECT_ROOT, "GUI_cogtiffConverter.py"),
+        os.path.join(PROJECT_ROOT, "GUI_COGtools.py"),
     )
 
     candidate = os.path.join("C:", "OSGeo4W", "bin", "python3.exe")
@@ -36,7 +36,7 @@ def test_detect_python_home_returns_string():
 def test_app_class_exists():
     gui_mod = load_module_from_path(
         "gui_module",
-        os.path.join(PROJECT_ROOT, "GUI_cogtiffConverter.py"),
+        os.path.join(PROJECT_ROOT, "GUI_COGtools.py"),
     )
     assert callable(gui_mod.BandKonverterApp)
 
@@ -44,7 +44,7 @@ def test_app_class_exists():
 def test_nodata_presets_for_mosaic_tab():
     gui_mod = load_module_from_path(
         "gui_module",
-        os.path.join(PROJECT_ROOT, "GUI_cogtiffConverter.py"),
+        os.path.join(PROJECT_ROOT, "GUI_COGtools.py"),
     )
     assert set(gui_mod.NODATA_OPTIONS.keys()) == {"(unveraendert)", "8bit", "16bit"}
     assert "0 0 0" in gui_mod.NODATA_OPTIONS["8bit"]
@@ -70,7 +70,7 @@ def test_to_bigtiff_action_available():
 def test_bigtiff_tab_widgets_exist():
     gui_mod = load_module_from_path(
         "gui_module",
-        os.path.join(PROJECT_ROOT, "GUI_cogtiffConverter.py"),
+        os.path.join(PROJECT_ROOT, "GUI_COGtools.py"),
     )
     app = gui_mod.BandKonverterApp()
     try:

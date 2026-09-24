@@ -10,7 +10,7 @@ Drei GDAL-Werkzeuge rund um Cloud-Optimized GeoTIFFs (COG), als Tabs im selben G
 
 Eingabe im cmd-Terminal:
 ```bash
-python pfad/GUI_cogtiffConverter.py
+python pfad/GUI_COGtools.py
 ```
 <img width="635" height="691" alt="image" src="https://github.com/user-attachments/assets/eb0ba387-4f68-4db9-9311-63d8c42892bc" />
 
@@ -30,7 +30,7 @@ Typische Anwendungsfälle mit swisstopo-Luftbildern (DOP) fuer die Band-Konverti
 
 | Datei | Beschreibung |
 |-------|-------------|
-| `GUI_cogtiffConverter.py` | Tkinter-GUI — startet mit Standard-Python |
+| `GUI_COGtools.py` | Tkinter-GUI — startet mit Standard-Python |
 | `process_scripts/_osgeo_runner.py` | GDAL-Worker — wird intern via OSGeo4W Python als Subprocess gestartet |
 | `process_scripts/02_convertDATA_cogtiff_4band_to_3band.py` | Standalone-Script für die Kommandozeile (erfordert OSGeo4W Python direkt) |
 | `process_scripts/_cogtiff_config.json` | GUI-Konfiguration (OSGeo4W-Python-Pfad), wird automatisch angelegt |
@@ -50,7 +50,7 @@ Typische Anwendungsfälle mit swisstopo-Luftbildern (DOP) fuer die Band-Konverti
 ## GUI starten
 
 ```bash
-python GUI_cogtiffConverter.py
+python GUI_COGtools.py
 ```
 
 Beim ersten Start erkennt das GUI automatisch die OSGeo4W-Installation. Der Pfad kann über die Schaltfläche **Ändern…** manuell gesetzt und wird in `process_scripts/_cogtiff_config.json` gespeichert.
@@ -236,7 +236,7 @@ Konfiguration direkt im Script-Kopf anpassen (`INPUT_PATH`, `OUTPUT_PATH`, `OUTP
 ## Architektur
 
 ```
-GUI_cogtiffConverter.py            (Standard-Python, tkinter)
+GUI_COGtools.py                    (Standard-Python, tkinter)
         │
         │  JSON-Config (tempfile)
         ▼
